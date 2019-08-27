@@ -1,0 +1,3 @@
+[submodule "configfactory"]
+	path = configfactory
+	url = https://github.com/rmrao/configfactory
