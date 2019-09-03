@@ -9,11 +9,6 @@ import sentencepiece as spm
 
 from torch.utils.data import Dataset
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-    datefmt="%m/%d/%Y %H:%M:%S",
-    level=logging.INFO,
-)
 logger = logging.getLogger(__name__)
 
 
@@ -59,11 +54,11 @@ class PfamTokenizer(object):
         model_file_provided = model_file is not None
 
         if not (corpus_file_provided ^ model_file_provided):
-            logging.error("Must provide either a corpus file or a trained model file")
+            logger.error("Must provide either a corpus file or a trained model file")
             raise ValueError("Must provide either a corpus file or a trained model file")
 
         if corpus_file_provided:
-            logging.info(f'Corpus file is provided, running sentencepiece training')
+            logger.info(f'Corpus file is provided, running sentencepiece training')
             command = [f'--input={corpus_file}',
                        f'--model_prefix=pfam',
                        f'--vocab_size=8000',
@@ -82,7 +77,7 @@ class PfamTokenizer(object):
             model_file = 'pfam.model'
 
         assert model_file is not None
-        logging.info(f'Loading sentencepiece model from {model_file}')
+        logger.info(f'Loading sentencepiece model from {model_file}')
         model_file = Path(model_file)
 
         if not model_file.is_file():

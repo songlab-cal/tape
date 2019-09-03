@@ -6,6 +6,7 @@ from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
+from dataclasses import dataclass
 
 import click
 import numpy as np
@@ -18,6 +19,11 @@ from tensorboardX import SummaryWriter
 
 from datasets import PfamTokenizer, PfamDataset
 
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+    datefmt="%m/%d/%Y %H:%M:%S",
+    level=logging.INFO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,53 +39,35 @@ class TBLogger:
         self.logger.add_scalar(split + "/" + key, val, step)
 
 
-class TaskConfig(object):
-
-    def __init__(self,
-                 data_dir: str = 'data',
-                 vocab_file: str = 'data/pfam.model',
-                 pretrained_weight: Optional[str] = None,
-                 log_dir: str = 'logs',
-                 output_dir: str = 'results',
-                 config_file: str = 'config/bert_config.json',
-                 # max_seq_length: Optional[int] = None,
-                 train_batch_size: int = 512,
-                 learning_rate: float = 1e-4,
-                 num_train_epochs: int = 10,
-                 warmup_steps: int = 10000,
-                 cuda: bool = True,
-                 on_memory: bool = False,
-                 seed: int = 42,
-                 gradient_accumulation_steps: int = 1,
-                 fp16: bool = False,
-                 loss_scale: float = 0,
-                 num_workers: int = 20,
-                 from_pretrained: bool = False,
-                 exp_name: Optional[str] = None):
-        self.data_dir = data_dir
-        self.vocab_file = vocab_file
-        self.pretrained_weight = pretrained_weight
-        self.log_dir = log_dir
-        self.output_dir = output_dir
-        self.config_file = config_file
-        self.train_batch_size = train_batch_size
-        self.learning_rate = learning_rate
-        self.num_train_epochs = num_train_epochs
-        self.warmup_steps = warmup_steps
-        self.cuda = cuda
-        self.on_memory = on_memory
-        self.seed = seed
-        self.gradient_accumulation_steps = gradient_accumulation_steps
-        self.fp16 = fp16
-        self.loss_scale = loss_scale
-        self.num_workers = num_workers
-        self.from_pretrained = from_pretrained
-        self.exp_name = exp_name
+@dataclass(frozen=False)
+class TaskConfig:
+    data_dir: str = 'data'
+    vocab_file: str = 'data/pfam.model'
+    pretrained_weight: Optional[str] = None
+    log_dir: str = 'logs'
+    output_dir: str = 'results'
+    config_file: str = 'config/bert_config.json'
+    # max_seq_length: Optional[int] = None
+    train_batch_size: int = 512
+    learning_rate: float = 1e-4
+    num_train_epochs: int = 10
+    warmup_steps: int = 10000
+    cuda: bool = True
+    on_memory: bool = False
+    seed: int = 42
+    gradient_accumulation_steps: int = 1
+    fp16: bool = False
+    loss_scale: float = 0
+    num_workers: int = 20
+    from_pretrained: bool = False
+    exp_name: Optional[str] = None
+    local_rank: int = -1
+    bert_model: str = ''
 
 
 class TaskRunner(object):
 
-    def __init__(self, args):
+    def __init__(self, args: TaskConfig):
 
         super().__init__()
 
@@ -114,21 +102,38 @@ class TaskRunner(object):
         model = self._setup_model(
             args.from_pretrained, args.bert_model, config, args.local_rank, n_gpu, args.fp16)
 
+        # Store defaults
+        self.exp_name = exp_name
         self.model = model
         self.config = config
         self.tokenizer = tokenizer
         self.save_path = save_path
-        self.exp_name = exp_name
-        self.log_dir = args.log_dir
-        self.data_dir = args.data_dir
-        self.train_batch_size = args.train_batch_size
-        self.num_workers = args.num_workers
         self.device = device
         self.n_gpu = n_gpu
-        self.gradient_accumulation_steps = args.gradient_accumulation_steps
+        self.max_grad_norm = 1.0
+
+        # Store args
+        self.data_dir = args.data_dir
+        self.vocab_file = args.vocab_file
+        self.pretrained_weight = args.pretrained_weight
+        self.log_dir = args.log_dir
+        self.output_dir = args.output_dir
+        self.config_file = args.config_file
         self.train_batch_size = args.train_batch_size
+        self.learning_rate = args.learning_rate
+        self.num_train_epochs = args.num_train_epochs
+        self.warmup_steps = args.warmup_steps
+        self.cuda = args.cuda
+        self.on_memory = args.on_memory
+        self.seed = args.seed
+        self.gradient_accumulation_steps = args.gradient_accumulation_steps
         self.fp16 = args.fp16
-        self.max_grad_norm = args.max_grad_norm
+        self.loss_scale = args.loss_scale
+        self.num_workers = args.num_workers
+        self.from_pretrained = args.from_pretrained
+        self.local_rank = args.local_rank
+        self.bert_model = args.bert_model
+
 
     def _setup_model(self,
                      from_pretrained: bool,
@@ -434,6 +439,8 @@ class TaskRunner(object):
 @click.option('--loss-scale', default=0, type=float)
 @click.option('--from-pretrained', is_flag=True)
 @click.option('--exp-name', default=None, type=str)
+@click.option('--local-rank', default=-1, type=int)
+@click.option('--bert-model', default=str, type=str)
 def main(data_dir: str = 'data',
          vocab_file: str = 'data/pfam.model',
          pretrained_weight: Optional[str] = None,
@@ -453,7 +460,9 @@ def main(data_dir: str = 'data',
          loss_scale: float = 0,
          num_workers: int = 20,
          from_pretrained: bool = False,
-         exp_name: Optional[str] = None):
+         exp_name: Optional[str] = None,
+         local_rank: int = -1,
+         bert_model: str = ''):
 
     config = TaskConfig(
         data_dir, vocab_file, pretrained_weight, log_dir,
@@ -461,7 +470,7 @@ def main(data_dir: str = 'data',
         num_train_epochs, warmup_steps, cuda,
         on_memory, seed, gradient_accumulation_steps,
         fp16, loss_scale, num_workers, from_pretrained,
-        exp_name)
+        exp_name, local_rank, bert_model)
 
     runner = TaskRunner(config)
     runner.train()
