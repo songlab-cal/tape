@@ -1,36 +1,96 @@
-from typing import Optional, Tuple
-import os
+from typing import Optional, Tuple, Union
 import random
+import math
 from time import strftime, gmtime
+from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
 
+import click
 import numpy as np
 import torch
 import torch.nn as nn
-from pytorch_transformers import BertConfig, BertForMaskedLM, BertForPreTraining, AdamW
-from configfactory import Registry
+from torch.utils.data import DataLoader
+from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTraining,
+                                  AdamW, WarmupLinearSchedule)
+from tensorboardX import SummaryWriter
 
-config = Registry()
+from datasets import PfamTokenizer, PfamDataset
 
 
 logger = logging.getLogger(__name__)
 
 
+class TBLogger:
+
+    def __init__(self, log_dir: Union[str, Path], exp_name: str):
+        log_dir = Path(log_dir) / exp_name
+        logger.info(f"tensorboard file at: {log_dir}")
+        self.logger = SummaryWriter(log_dir=str(log_dir))
+
+    def line_plot(self, step, val, split, key, xlabel="None") -> None:
+        self.logger.add_scalar(split + "/" + key, val, step)
+
+
+class TaskConfig(object):
+
+    def __init__(self,
+                 data_dir: str = 'data',
+                 vocab_file: str = 'data/pfam.model',
+                 pretrained_weight: Optional[str] = None,
+                 log_dir: str = 'logs',
+                 output_dir: str = 'results',
+                 config_file: str = 'config/bert_config.json',
+                 # max_seq_length: Optional[int] = None,
+                 train_batch_size: int = 512,
+                 learning_rate: float = 1e-4,
+                 num_train_epochs: int = 10,
+                 warmup_steps: int = 10000,
+                 cuda: bool = True,
+                 on_memory: bool = False,
+                 seed: int = 42,
+                 gradient_accumulation_steps: int = 1,
+                 fp16: bool = False,
+                 loss_scale: float = 0,
+                 num_workers: int = 20,
+                 from_pretrained: bool = False,
+                 exp_name: Optional[str] = None):
+        self.data_dir = data_dir
+        self.vocab_file = vocab_file
+        self.pretrained_weight = pretrained_weight
+        self.log_dir = log_dir
+        self.output_dir = output_dir
+        self.config_file = config_file
+        self.train_batch_size = train_batch_size
+        self.learning_rate = learning_rate
+        self.num_train_epochs = num_train_epochs
+        self.warmup_steps = warmup_steps
+        self.cuda = cuda
+        self.on_memory = on_memory
+        self.seed = seed
+        self.gradient_accumulation_steps = gradient_accumulation_steps
+        self.fp16 = fp16
+        self.loss_scale = loss_scale
+        self.num_workers = num_workers
+        self.from_pretrained = from_pretrained
+        self.exp_name = exp_name
+
+
 class TaskRunner(object):
 
     def __init__(self, args):
+
         super().__init__()
 
-        save_path = self._get_savepath(args.output_dir, args.save_name)
+        save_path, exp_name = self._get_savepath(args.output_dir, args.exp_name)
         save_path.mkdir(parents=True, exist_ok=True)
 
         # save all the hidden parameters.
         with (save_path / 'command.txt').open('w') as f:
             print(args, end='\n\n', file=f)
 
-        device, n_gpu = self._setup_distributed(args.local_rank, args.no_cuda)
+        device, n_gpu = self._setup_distributed(args.local_rank, args.cuda)
 
         logger.info(
             f"device: {device} "
@@ -47,12 +107,28 @@ class TaskRunner(object):
 
         self._set_random_seeds(args.seed, n_gpu)
 
-        tokenizer = None  # TODO: Make a tokenizer
+        tokenizer = PfamTokenizer.from_pretrained(args.vocab_file)
 
         config = BertConfig.from_json_file(args.config_file)
 
         model = self._setup_model(
             args.from_pretrained, args.bert_model, config, args.local_rank, n_gpu, args.fp16)
+
+        self.model = model
+        self.config = config
+        self.tokenizer = tokenizer
+        self.save_path = save_path
+        self.exp_name = exp_name
+        self.log_dir = args.log_dir
+        self.data_dir = args.data_dir
+        self.train_batch_size = args.train_batch_size
+        self.num_workers = args.num_workers
+        self.device = device
+        self.n_gpu = n_gpu
+        self.gradient_accumulation_steps = args.gradient_accumulation_steps
+        self.train_batch_size = args.train_batch_size
+        self.fp16 = args.fp16
+        self.max_grad_norm = args.max_grad_norm
 
     def _setup_model(self,
                      from_pretrained: bool,
@@ -90,9 +166,7 @@ class TaskRunner(object):
                          fp16: bool,
                          learning_rate: float,
                          pretrained_weight: str,
-                         loss_scale: int,
-                         warmup_steps: int,
-                         num_train_optimization_steps: int):
+                         loss_scale: int):
         no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
         if not from_pretrained:
             param_optimizer = list(model.named_parameters())
@@ -159,22 +233,21 @@ class TaskRunner(object):
 
         return optimizer
 
-    def _get_savepath(self, output_dir: str, save_name: Optional[str]) -> Path:
-        if save_name is None:
+    def _get_savepath(self, output_dir: str, exp_name: Optional[str]) -> Tuple[Path, str]:
+        if exp_name is None:
             time_stamp = strftime("%d-%b-%y-%X-%a", gmtime())
-            save_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
+            exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
 
-        save_path = Path(output_dir) / save_name
+        save_path = Path(output_dir) / exp_name
+        return save_path, exp_name
 
-        return save_path
-
-    def _setup_distributed(self, local_rank: int, no_cuda: bool) -> Tuple[torch.device, int]:
-        if local_rank != -1 and not no_cuda:
+    def _setup_distributed(self, local_rank: int, cuda: bool) -> Tuple[torch.device, int]:
+        if local_rank != -1 and cuda:
             torch.cuda.set_device(local_rank)
             device = torch.device("cuda", local_rank)
             n_gpu = 1
             torch.distributed.init_process_group(backend="nccl")
-        elif not torch.cuda.is_available() or no_cuda:
+        elif not torch.cuda.is_available() or not cuda:
             device = torch.device("cpu")
             n_gpu = torch.cuda.device_count()
         else:
@@ -191,24 +264,13 @@ class TaskRunner(object):
             torch.cuda.manual_seed_all(seed)
 
     def train(self):
-        viz = TBlogger("logs", timeStamp)
+        viz = TBLogger(self.log_dir, self.exp_name)
 
-        train_dataset = PfamLoaderTrain(
-            args.train_file,
-            tokenizer,
-            seq_len=args.max_seq_length,
-            batch_size=args.train_batch_size,
-            predict_feature=args.predict_feature,
-            num_workers=args.num_workers)
+        train_dataset = PfamDataset(self.data_dir, 'train', self.tokenizer)
+        valid_dataset = PfamDataset(self.data_dir, 'valid', self.tokenizer)
 
-        validation_dataset = PfamLoaderVal(
-            args.validation_file,
-            tokenizer,
-            seq_len=args.max_seq_length,
-            batch_size=args.train_batch_size,
-            predict_feature=args.predict_feature,
-            num_workers=args.num_workers,
-        )
+        train_loader = DataLoader(train_dataset, self.train_batch_size, self.num_workers)
+        valid_loader = DataLoader(valid_dataset, self.train_batch_size, self.num_workers)
 
         num_train_optimization_steps = len(train_dataset)
         num_train_optimization_steps /= self.train_batch_size
@@ -219,19 +281,171 @@ class TaskRunner(object):
         if self.local_rank != -1:
             num_train_optimization_steps //= torch.distributed.get_world_size()
 
+        optimizer = self._setup_optimizer(
+            self.model, self.from_pretrained, self.fp16,
+            self.learning_rate, self.pretrained_weight, self.loss_scale)
 
-@config.register
-def main(train_file: str,
-         validation_file: str,
+        scheduler = WarmupLinearSchedule(
+            optimizer, warmup_steps=self.warmup_steps, t_total=num_train_optimization_steps)
+
+        logger.info("***** Running training *****")
+        logger.info("  Num examples = %d", len(train_dataset))
+        logger.info("  Batch size = %d", self.train_batch_size)
+        logger.info("  Num steps = %d", num_train_optimization_steps)
+
+        self._iter_id = 0
+        self._global_step = 0
+
+        for epoch_id in range(self.num_train_epochs):
+            self._run_train_epoch(
+                epoch_id, train_loader, optimizer, scheduler, viz)
+            self._run_valid_epoch(
+                epoch_id, valid_loader, viz)
+
+            # Save trained model
+            logger.info("** ** * Saving trained model ** ** * ")
+
+            # Only save the model itself
+            model_to_save = getattr(self.model, 'module', self.model)
+            output_model_file = self.save_path / f"pytorch_model_{epoch_id}.bin"
+
+            torch.save(model_to_save.state_dict(), output_model_file)
+
+    def _run_train_epoch(self,
+                         epoch_id: int,
+                         train_loader: DataLoader,
+                         optimizer: torch.optim.Optimizer,
+                         scheduler: WarmupLinearSchedule,
+                         viz: TBLogger):
+        train_loss = 0
+        num_train_examples = 0
+        num_train_steps = 0
+        loss_tmp = 0.
+
+        torch.set_grad_enabled(False)
+        self.model.train()
+
+        start_t = timer()
+        for step, batch in enumerate(train_loader):
+            self._iter_id += 1
+            batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
+            input_ids, input_mask, lm_label_ids, clan, family = batch
+            loss = self.model(input_ids, input_mask, lm_label_ids, clan, family)
+
+            if self.n_gpu > 1:
+                loss = loss.mean()  # mean() to average on multi-gpu
+            if self.gradient_accumulation_steps > 1:
+                loss = loss / self.gradient_accumulation_steps
+            if self.fp16:
+                optimizer.backward(loss)
+            else:
+                loss.backward()
+
+            if math.isnan(loss.item()):
+                import pdb
+                pdb.set_trace()
+
+            train_loss += loss.item()
+
+            viz.line_plot(self._iter_id, loss.item(), "loss", "train")
+
+            loss_tmp += loss.item()
+
+            num_train_examples += input_ids.size(0)
+            num_train_steps += 1
+
+            if (step + 1) % self.gradient_accumulation_steps == 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model.parameters(), self.max_grad_norm)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+                self._global_step += 1
+
+            if step % 20 == 0 and step != 0:
+                loss_tmp = loss_tmp / 20.0
+                end_t = timer()
+                time_stamp = strftime("%a %d %b %y %X", gmtime())
+
+                ep = epoch_id + num_train_steps / float(len(train_loader))
+                print_str = [
+                    f"[{time_stamp}]",
+                    f"[Ep: {ep:.2f}]",
+                    f"[Iter: {num_train_steps}]",
+                    f"[Time: {end_t - start_t:5.2f}s]",
+                    f"[Loss: {loss_tmp:.5g}]",
+                    f"[LR: {optimizer.get_lr()[0]:.5g}]"]
+                start_t = end_t
+
+                logging.info(''.join(print_str))
+                loss_tmp = 0
+
+    def _run_valid_epoch(self,
+                         epoch_id: int,
+                         valid_loader: DataLoader,
+                         viz: TBLogger):
+        num_batches = len(valid_loader)
+        eval_loss = 0.
+
+        torch.set_grad_enabled(False)
+        self.model.eval()
+
+        start_t = timer()
+        for step, batch in enumerate(valid_loader):
+            batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
+            input_ids, input_mask, lm_label_ids, clan, family = batch
+            loss = self.model(input_ids, input_mask, lm_label_ids, clan, family)
+
+            if self.n_gpu > 1:
+                loss = loss.mean()  # mean() to average on multi-gpu
+
+            eval_loss += loss.item()
+
+            end_t = timer()
+            progress_string = f"\r Evaluating split val [{step + 1}/{num_batches}\t " \
+                              f"Time: {end_t - start_t:5.2f}s]"
+
+            logging.info(progress_string)
+
+        eval_loss /= num_batches
+
+        print_str = "Evaluation: [Loss: {eval_loss:.5g}]"
+
+        logging.info(print_str)
+        viz.line_plot(epoch_id, eval_loss, "loss", "val")
+
+
+@click.command()
+@click.option('--data-dir', default='data', type=click.Path(exists=True, file_okay=False))
+@click.option('--vocab-file', default='data/pfam.model', type=click.Path(exists=True, dir_okay=False))
+@click.option('--pretrained-weight', default=None, type=click.Path(exists=True, dir_okay=False))
+@click.option('--log-dir', default='logs', type=click.Path())
+@click.option('--output-dir', default='results', type=click.Path())
+@click.option('--config-file', default='config/bert_config.json', type=click.Path(exists=True, dir_okay=False))
+@click.option('--train-batch-size', default=512, type=int)
+@click.option('--learning-rate', default=1e-4, type=float)
+@click.option('--num-train-epochs', default=10, type=int)
+@click.option('--warmup-steps', default=10000, type=int)
+@click.option('--cuda/--no-cuda', default=True)
+@click.option('--on-memory', is_flag=True)
+@click.option('--seed', default=42, type=int)
+@click.option('--gradient-accumulation-steps', default=1, type=int)
+@click.option('--fp16/--no-fp16', default=False)
+@click.option('--loss-scale', default=0, type=float)
+@click.option('--from-pretrained', is_flag=True)
+@click.option('--exp-name', default=None, type=str)
+def main(data_dir: str = 'data',
+         vocab_file: str = 'data/pfam.model',
          pretrained_weight: Optional[str] = None,
+         log_dir: str = 'logs',
          output_dir: str = 'results',
          config_file: str = 'config/bert_config.json',
-         max_seq_length: Optional[int] = None,
+         # max_seq_length: Optional[int] = None,
          train_batch_size: int = 512,
          learning_rate: float = 1e-4,
          num_train_epochs: int = 10,
          warmup_steps: int = 10000,
-         no_cuda: bool = False,
+         cuda: bool = True,
          on_memory: bool = False,
          seed: int = 42,
          gradient_accumulation_steps: int = 1,
@@ -239,10 +453,19 @@ def main(train_file: str,
          loss_scale: float = 0,
          num_workers: int = 20,
          from_pretrained: bool = False,
-         save_name: Optional[str] = None):
+         exp_name: Optional[str] = None):
 
-    parser = config.get_parser()
-    parser.add_argument('--local_rank', type=int)
-    args = parser.parse_args()
+    config = TaskConfig(
+        data_dir, vocab_file, pretrained_weight, log_dir,
+        output_dir, config_file, train_batch_size, learning_rate,
+        num_train_epochs, warmup_steps, cuda,
+        on_memory, seed, gradient_accumulation_steps,
+        fp16, loss_scale, num_workers, from_pretrained,
+        exp_name)
 
-    runner = TaskRunner(args)
+    runner = TaskRunner(config)
+    runner.train()
+
+
+if __name__ == '__main__':
+    main()
