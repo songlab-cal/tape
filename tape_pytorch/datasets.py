@@ -1,4 +1,5 @@
 from typing import Union, List, Tuple, Optional, Sequence
+from abc import ABC, abstractmethod
 from pathlib import Path
 import pickle as pkl
 import logging
@@ -180,6 +181,24 @@ class LMDBDataset(Dataset):
         return item
 
 
+class PaddedBatch(ABC):
+
+    @abstractmethod
+    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Tuple[np.ndarray]:
+        return NotImplemented
+
+    def _pad_numpy(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+        batch_size = len(sequences)
+        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
+        array = np.zeros(shape, sequences[0].dtype) + constant_value
+
+        for arr, seq in zip(array, sequences):
+            arrslice = tuple(slice(dim) for dim in seq.shape)
+            arr[arrslice] = seq
+
+        return array
+
+
 class PfamDataset(LMDBDataset):
     """Creates the Pfam Dataset
     Args:
@@ -200,6 +219,8 @@ class PfamDataset(LMDBDataset):
         data_path = Path(data_path)
         data_file = data_path / 'pfam' / f'pfam_{mode}.lmdb'
 
+        super().__init__(data_file, in_memory)
+
         if tokenizer is None:
             model_file = data_path / 'pfam.model'
             if not (model_file.exists()):
@@ -208,50 +229,14 @@ class PfamDataset(LMDBDataset):
                     "looks for files in data_path/pfam.model. You must either place the "
                     "model file there or provide the tokenizer yourself.")
             tokenizer = PfamTokenizer.from_pretrained(model_file)
-
-        preprocess_function = BertPreprocessBatch(tokenizer)
-        self.preprocess = preprocess_function
-        super().__init__(data_file, in_memory)
-
-    def __getitem__(self, index):
-        return self.preprocess(super().__getitem__(index))
-
-
-class PfamBatch:
-
-    def __call__(self, batch):
-        input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
-
-        input_ids = self._pad_numpy(input_ids, 0)  # pad input_ids with zeros
-        input_mask = self._pad_numpy(input_mask, 0)  # pad input_mask with zeros
-        lm_label_ids = self._pad_numpy(lm_label_ids, -1)  # pad lm_label_ids with minus ones
-        clan = np.stack(clan, 0)
-        family = np.stack(family, 0)
-
-        return input_ids, input_mask, lm_label_ids, clan, family
-
-    def _pad_numpy(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
-        batch_size = len(sequences)
-        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
-        array = np.zeros(shape, sequences[0].dtype) + constant_value
-
-        for arr, seq in zip(array, sequences):
-            arrslice = tuple(slice(dim) for dim in seq.shape)
-            arr[arrslice] = seq
-
-        return array
-
-
-class BertPreprocessBatch(object):
-
-    def __init__(self, tokenizer: PfamTokenizer):
-
         self.tokenizer = tokenizer
 
-    def __call__(self, data):
-        tokenize_primary = self.tokenizer.tokenize(data['primary'])
+    def __getitem__(self, index):
+        item = super().__getitem__(index)
+        tokenize_primary = self.tokenizer.tokenize(item['primary'])
 
-        print(len(data['primary']), len(tokenize_primary))
+        input_ids, input_mask, lm_label_ids = self.convert_example_to_features(
+            tokenize_primary)
 
         # transform sample to features
         input_ids, input_mask, lm_label_ids = self.convert_example_to_features(
@@ -261,12 +246,12 @@ class BertPreprocessBatch(object):
             input_ids,
             input_mask,
             lm_label_ids,
-            data['clan'],
-            data['family'])
+            item['clan'],
+            item['family'])
 
         return tensors
 
-    def convert_example_to_features(self, primary, tokenizer):
+    def convert_example_to_features(self, primary):
         """
         Convert a raw sample (pair of sentences as tokenized strings) into a proper training sample with
         IDs, LM labels, input_mask, CLS and SEP tokens etc.
@@ -275,7 +260,7 @@ class BertPreprocessBatch(object):
         :param tokenizer: Tokenizer
         :return: InputFeatures, containing all inputs and labels of one sample as IDs (as used for model training)
         """
-        primary, primary_label = self.random_word(primary, tokenizer)
+        primary, primary_label = self.random_word(primary)
         # concatenate lm labels and account for CLS, SEP
         # lm_label_ids = ([-1] + primary_label + [-1])
         lm_label_ids = [-1] + primary_label + [-1]
@@ -301,41 +286,29 @@ class BertPreprocessBatch(object):
         # the entire model is fine-tuned.
         tokens = []
 
-        tokens.append(tokenizer.cls_token)
+        tokens.append(self.tokenizer.cls_token)
 
-        tokens = [tokenizer.cls_token] + primary + [tokenizer.sep_token]
-        input_ids = tokenizer.convert_tokens_to_ids(tokens)
+        tokens = [self.tokenizer.cls_token] + primary + [self.tokenizer.sep_token]
+        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
         # The mask has 1 for real tokens and 0 for padding tokens. Only real
         # tokens are attended to.
-        # input_ids = input_ids[:1] input_ids[1:]
         input_mask = [1] * (len(input_ids))
-
-        # Zero-pad up to the sequence length.
-        # while len(input_ids) < max_seq_length:
-            # input_ids.append(0)
-            # input_mask.append(0)
-            # lm_label_ids.append(-1)
-
-        # assert len(input_ids) == max_seq_length
-        # assert len(input_mask) == max_seq_length
-        # assert len(lm_label_ids) == max_seq_length
-
         return input_ids, input_mask, lm_label_ids
 
-    def _bert_mask_token(self, token: str, tokenizer: PfamTokenizer) -> Tuple[str, int]:
+    def _bert_mask_token(self, token: str) -> Tuple[str, int]:
         prob = random.random()
 
         if prob < 0.15:
             prob /= 0.15
-            label = tokenizer.convert_token_to_id(token)
+            label = self.tokenizer.convert_token_to_id(token)
 
             if prob < 0.8:
                 # 80% random change to mask token
-                token = tokenizer.mask_token
+                token = self.tokenizer.mask_token
             elif prob < 0.9:
                 # 10% chance to change to random token
-                token = tokenizer.convert_id_to_token(random.randint(0, tokenizer.vocab_size))
+                token = self.tokenizer.convert_id_to_token(random.randint(0, self.tokenizer.vocab_size))
             else:
                 # 10% chance to keep current token
                 pass
@@ -352,3 +325,57 @@ class BertPreprocessBatch(object):
         :return: (list of str, list of int), masked tokens and related labels for LM prediction
         """
         return list(map(list, zip(*(self._bert_mask_token(token, tokenizer) for token in tokens))))  # type: ignore
+
+
+class PfamBatch(PaddedBatch):
+
+    def __call__(self, batch):
+        input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
+
+        input_ids = self._pad_numpy(input_ids, 0)  # pad input_ids with zeros
+        input_mask = self._pad_numpy(input_mask, 0)  # pad input_mask with zeros
+        lm_label_ids = self._pad_numpy(lm_label_ids, -1)  # pad lm_label_ids with minus ones
+        clan = np.stack(clan, 0)
+        family = np.stack(family, 0)
+
+        return input_ids, input_mask, lm_label_ids, clan, family
+
+
+class FluorescenceDataset(LMDBDataset):
+    pass
+
+
+class FluorescenceBatch(PaddedBatch):
+    pass
+
+
+class StabilitiyDataset(LMDBDataset):
+    pass
+
+
+class StabilitiyBatch(PaddedBatch):
+    pass
+
+
+class RemoteHomologyDataset(LMDBDataset):
+    pass
+
+
+class RemoteHomologyBatch(PaddedBatch):
+    pass
+
+
+class ProteinnetDataset:
+    pass
+
+
+class ProteinnetBatch(PaddedBatch):
+    pass
+
+
+class SecondaryStructureDataset:
+    pass
+
+
+class SecondaryStructureBatch(PaddedBatch):
+    pass
