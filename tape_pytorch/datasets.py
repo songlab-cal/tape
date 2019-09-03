@@ -49,7 +49,6 @@ class PfamTokenizer(object):
     def __init__(self, *,  # only accept keyword arguments
                  corpus_file: Optional[Union[str, Path]] = None,
                  model_file: Optional[Union[str, Path]] = None,
-                 vocab_file: Optional[Union[str, Path]] = None,
                  unk_token: str = "<unk>",
                  sep_token: str = "<sep>",
                  pad_token: str = "<pad>",
@@ -58,10 +57,9 @@ class PfamTokenizer(object):
 
         corpus_file_provided = corpus_file is not None
         model_file_provided = model_file is not None
-        vocab_file_provided = vocab_file is not None
 
-        if not (corpus_file_provided ^ (model_file_provided and vocab_file_provided)):
-            raise ValueError("Must provide either a corpus file or a trained model/vocab file")
+        if not (corpus_file_provided ^ model_file_provided):
+            raise ValueError("Must provide either a corpus file or a trained model file")
 
         if corpus_file_provided:
             command = [f'--input={corpus_file}',
@@ -80,22 +78,16 @@ class PfamTokenizer(object):
                        f'--character_coverage=1.0']
             spm.SentencePieceTrainer.Train(' '.join(command))
             model_file = 'pfam.model'
-            vocab_file = 'pfam.vocab'
 
-        assert model_file is not None and vocab_file is not None
-
+        assert model_file is not None
         model_file = Path(model_file)
-        vocab_file = Path(vocab_file)
 
         if not model_file.is_file():
             raise FileNotFoundError(model_file)
-        if not vocab_file.is_file():
-            raise FileNotFoundError(vocab_file)
-        sp = spm.SentencePieceProcessor(str(model_file))
-        vocab = sp.load_vocabulary(str(vocab_file), threshold=50)  # threshold is min number of occurances
+        sp = spm.SentencePieceProcessor()
+        sp.Load(str(model_file))
 
         self.sp = sp
-        self.vocab = vocab
         self.unk_token = unk_token
         self.sep_token = sep_token
         self.pad_token = pad_token
@@ -106,16 +98,19 @@ class PfamTokenizer(object):
     def vocab_size(self) -> int:
         return len(self.sp)
 
-    def _tokenize(self, text: str) -> List[str]:
+    def tokenize(self, text: str) -> List[str]:
         return self.sp.encode_as_pieces(text)
 
-    def _convert_token_to_id(self, token: str) -> int:
+    def convert_token_to_id(self, token: str) -> int:
         """ Converts a token (str/unicode) in an id using the vocab. """
         return self.sp.piece_to_id(token)
 
-    def _convert_id_to_token(self, index: int) -> str:
+    def convert_id_to_token(self, index: int) -> str:
         """Converts an index (integer) in a token (string/unicode) using the vocab."""
         return self.sp.id_to_piece(index)
+
+    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
+        return [self.convert_token_to_id(token) for token in tokens]
 
     def convert_tokens_to_string(self, tokens: str) -> str:
         """ Converts a sequence of tokens (string) in a single string. """
@@ -127,7 +122,7 @@ class PfamTokenizer(object):
         A BERT sequence has the following format: [CLS] X [SEP]
         """
 
-        return [self._convert_token_to_id(self.cls_token)] + token_ids + [self._convert_token_to_id(self.sep_token)]
+        return [self.convert_token_to_id(self.cls_token)] + token_ids + [self.convert_token_to_id(self.sep_token)]
 
     def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
         """
@@ -137,8 +132,8 @@ class PfamTokenizer(object):
         raise NotImplementedError("Can't do this for Pfam")
 
     @classmethod
-    def from_pretrained(cls, model_file: Union[str, Path], vocab_file: Union[str, Path], **kwargs):
-        return cls(model_file=model_file, vocab_file=vocab_file, **kwargs)
+    def from_pretrained(cls, model_file: Union[str, Path], **kwargs):
+        return cls(model_file=model_file, **kwargs)
 
 
 class LMDBDataset(Dataset):
@@ -209,13 +204,12 @@ class PfamDataset(LMDBDataset):
 
         if tokenizer is None:
             model_file = data_path / 'pfam.model'
-            vocab_file = data_path / 'pfam.vocab'
-            if not (model_file.exists() and vocab_file.exists()):
+            if not (model_file.exists()):
                 raise FileNotFoundError(
                     "PfamDataset requires a tokenizer. If tokenizer is not provided it "
-                    "Looks for files in data_path/pfam.model and data_path/pfam.vocab. "
-                    "You must either place those files there or provide the tokenizer yourself.")
-            tokenizer = PfamTokenizer.from_pretrained(model_file, vocab_file)
+                    "looks for files in data_path/pfam.model. You must either place the "
+                    "model file there or provide the tokenizer yourself.")
+            tokenizer = PfamTokenizer.from_pretrained(model_file)
 
         preprocess_function = BertPreprocessBatch(tokenizer)
         self.preprocess = preprocess_function
@@ -235,9 +229,11 @@ class BertPreprocessBatch(object):
 
         tokenize_primary = self.tokenizer.tokenize(data['primary'])
 
+        print(len(data['primary']), len(tokenize_primary))
+
         # transform sample to features
         input_ids, input_mask, lm_label_ids = self.convert_example_to_features(
-            tokenize_primary, self.seq_len, self.tokenizer, self.region_len)
+            tokenize_primary, self.tokenizer)
 
         tensors = (
             input_ids,
@@ -258,7 +254,6 @@ class BertPreprocessBatch(object):
         :return: InputFeatures, containing all inputs and labels of one sample as IDs (as used for model training)
         """
         primary, primary_label = self.random_word(primary, tokenizer)
-
         # concatenate lm labels and account for CLS, SEP
         # lm_label_ids = ([-1] + primary_label + [-1])
         lm_label_ids = [-1] + primary_label + [-1]
@@ -311,14 +306,14 @@ class BertPreprocessBatch(object):
 
         if prob < 0.15:
             prob /= 0.15
-            label = tokenizer._convert_token_to_id(token)
+            label = tokenizer.convert_token_to_id(token)
 
             if prob < 0.8:
                 # 80% random change to mask token
                 token = tokenizer.mask_token
             elif prob < 0.9:
                 # 10% chance to change to random token
-                token = tokenizer._convert_id_to_token(random.randint(0, tokenizer.vocab_size))
+                token = tokenizer.convert_id_to_token(random.randint(0, tokenizer.vocab_size))
             else:
                 # 10% chance to keep current token
                 pass
@@ -334,38 +329,4 @@ class BertPreprocessBatch(object):
         :param tokenizer: Tokenizer, object used for tokenization (we need it's vocab here)
         :return: (list of str, list of int), masked tokens and related labels for LM prediction
         """
-        return list(zip(*(self._bert_mask_token(token, tokenizer) for token in tokens)))  # type: ignore
-
-        # output_label = []
-#
-        # for i, token in enumerate(tokens):
-            # prob = random.random()
-            # # mask token with 15% probability
-#
-            # if prob < 0.15 and not self.visualization:
-                # prob /= 0.15
-#
-                # # 80% randomly change token to mask token
-                # if prob < 0.8:
-                    # tokens[i] = "[MASK]"
-#
-                # # 10% randomly change token to random token
-                # elif prob < 0.9:
-                    # tokens[i] = random.choice(list(tokenizer.vocab.items()))[0]
-#
-                # # -> rest 10% randomly keep current token
-#
-                # # append current token to output (we will predict these later)
-                # try:
-                    # output_label.append(tokenizer.vocab[token])
-                # except KeyError:
-                    # # For unknown words (should not occur with BPE vocab)
-                    # output_label.append(tokenizer.vocab["[UNK]"])
-                    # logger.warning(
-                        # "Cannot find token '{}' in vocab. Using [UNK] insetad".format(token)
-                    # )
-            # else:
-                # # no masking token (will be ignored by loss function later)
-                # output_label.append(-1)
-#
-        # return tokens, output_label
+        return list(map(list, zip(*(self._bert_mask_token(token, tokenizer) for token in tokens))))  # type: ignore
