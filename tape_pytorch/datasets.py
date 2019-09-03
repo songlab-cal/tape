@@ -59,9 +59,11 @@ class PfamTokenizer(object):
         model_file_provided = model_file is not None
 
         if not (corpus_file_provided ^ model_file_provided):
+            logging.error("Must provide either a corpus file or a trained model file")
             raise ValueError("Must provide either a corpus file or a trained model file")
 
         if corpus_file_provided:
+            logging.info(f'Corpus file is provided, running sentencepiece training')
             command = [f'--input={corpus_file}',
                        f'--model_prefix=pfam',
                        f'--vocab_size=8000',
@@ -80,6 +82,7 @@ class PfamTokenizer(object):
             model_file = 'pfam.model'
 
         assert model_file is not None
+        logging.info(f'Loading sentencepiece model from {model_file}')
         model_file = Path(model_file)
 
         if not model_file.is_file():
