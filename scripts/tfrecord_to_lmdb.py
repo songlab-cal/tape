@@ -1,23 +1,17 @@
-import tensorflow as tf
-import numpy as np
-from tape import data_utils
+
+from typing import Union, List
 import lmdb
 import os
 import pickle as pkl
 from tqdm import tqdm
 from pathlib import Path
 
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # disable tensorflow info logging
-tf.enable_eager_execution()
-
-
-data_dir = Path('/home/rmrao/projects/tape/data/')
-
-files = str(data_dir / 'proteinnet' / 'contact_map_test.tfrecord')
-
-outfile = 'data/proteinnet/proteinnet_test.lmdb'
-data = tf.data.TFRecordDataset(files).map(data_utils.deserialize_proteinnet_sequence)
-vocab = {v: k for k, v in data_utils.PFAM_VOCAB.items()}
+import warnings
+warnings.filterwarnings("ignore", module="tensorflow")
+warnings.filterwarnings("ignore", module="numpy")
+from tape import data_utils  # noqa: E402
+import tensorflow as tf  # noqa: E402
+import numpy as np  # noqa: E402
 
 
 def pythonify(tensor):
@@ -32,13 +26,63 @@ def pythonify(tensor):
         raise ValueError(array)
 
 
-env = lmdb.open(str(outfile), map_size=50e9)
-id_list = []
-with env.begin(write=True) as txn:
-    for i, example in enumerate(tqdm(data)):
-        item = {name: pythonify(tensor) for name, tensor in example.items()}
-        item['primary'] = ''.join(vocab[index] for index in item['primary'])
-        id_ = str(i).encode()
-        txn.put(id_, pkl.dumps(item))
-        id_list.append(id_)
-    txn.put('keys'.encode(), pkl.dumps(id_list))
+def convert(flist: Union[Path, List[Path]], outfile: Path, deserialization_func):
+    files = str(flist) if not isinstance(flist, list) else [str(path) for path in flist]
+    data = tf.data.TFRecordDataset(files).map(deserialization_func)
+    vocab = {v: k for k, v in data_utils.PFAM_VOCAB.items()}
+
+    env = lmdb.open(str(outfile), map_size=50e9)
+    with env.begin(write=True) as txn:
+        num_examples = 0
+        for i, example in enumerate(tqdm(data)):
+            item = {name: pythonify(tensor) for name, tensor in example.items()}
+            item['primary'] = ''.join(vocab[index] for index in item['primary'])
+            id_ = str(i).encode()
+            txn.put(id_, pkl.dumps(item))
+            num_examples += 1
+        txn.put(b'num_examples', pkl.dumps(num_examples))
+
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "1"  # disable tensorflow info logging
+tf.enable_eager_execution()
+
+data_dir = Path('/home/rmrao/projects/tape/data/')
+out_dir = Path('/home/rmrao/projects/tape-pytorch/data')
+
+file_lists: List[Union[Path, List[Path]]] = []
+file_lists.append(list((data_dir / 'pfam').glob('pfam31_train*.tfrecord')))
+file_lists.append(list((data_dir / 'pfam').glob('pfam31_valid*.tfrecord')))
+file_lists.append(data_dir / 'pfam' / 'pfam31_holdout.tfrecord')
+file_lists.append(list((data_dir / 'proteinnet').glob('contact_map_train*.tfrecord')))
+file_lists.append(data_dir / 'proteinnet' / 'contact_map_valid.tfrecord')
+file_lists.append(data_dir / 'proteinnet' / 'contact_map_test.tfrecord')
+file_lists += list((data_dir / 'fluorescence').glob('*.tfrecord'))
+file_lists += list((data_dir / 'stability').glob('*.tfrecord'))
+file_lists += list((data_dir / 'remote_homology').glob('*.tfrecord'))
+file_lists += list((data_dir / 'secondary_structure').glob('*.tfrecord'))
+
+deserialize_funcs = {
+    'pfam': data_utils.deserialize_pfam_sequence,
+    'proteinnet': data_utils.deserialize_proteinnet_sequence,
+    'fluorescence': data_utils.deserialize_fluorescence_sequence,
+    'stability': data_utils.deserialize_stability_sequence,
+    'remote_homology': data_utils.deserialize_remote_homology_sequence,
+    'secondary_structure': data_utils.deserialize_secondary_structure}
+
+# outfile = 'data/proteinnet/proteinnet_test.lmdb'
+flist_names = ['pfam_train.lmdb', 'pfam_valid.lmdb', 'proteinnet_train.lmdb']
+
+for flist in file_lists:
+    if isinstance(flist, list):
+        name = flist_names.pop(0)
+        deserialization_func = deserialize_funcs[flist[0].relative_to(data_dir).parts[0]]
+    else:
+        name = flist.with_suffix('.lmdb').name
+        deserialization_func = deserialize_funcs[flist.relative_to(data_dir).parts[0]]
+
+    name = name.replace('pfam31', 'pfam')
+    name = name.replace('contact_map', 'proteinnet')
+
+    outfile = out_dir / name
+    print("Converting", name)
+    convert(flist, outfile, deserialization_func)

@@ -12,7 +12,7 @@ vocab = {v: k for k, v in PFAM_VOCAB.items()}
 
 files = Path('data').rglob('*.lmdb')
 
-for lmdbfile in dropwhile(lambda f: f.stem != 'proteinnet_test', files):
+for lmdbfile in files:
     print(lmdbfile)
     env = lmdb.open(str(lmdbfile), map_size=50e9)
     with env.begin(write=True) as txn:
