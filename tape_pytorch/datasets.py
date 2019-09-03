@@ -1,4 +1,4 @@
-from typing import Union, List, Tuple, Optional
+from typing import Union, List, Tuple, Optional, Sequence
 from pathlib import Path
 import pickle as pkl
 import logging
@@ -6,7 +6,7 @@ import random
 
 import lmdb
 import sentencepiece as spm
-
+import numpy as np
 from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
@@ -217,6 +217,35 @@ class PfamDataset(LMDBDataset):
         return self.preprocess(super().__getitem__(index))
 
 
+class PfamBatch:
+
+    def __init__(self, batch):
+        input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
+
+        input_ids = self._pad_numpy(input_ids, 0)  # pad input_ids with zeros
+        input_mask = self._pad_numpy(input_mask, 0)  # pad input_mask with zeros
+        lm_label_ids = self._pad_numpy(lm_label_ids, -1)  # pad lm_label_ids with minus ones
+        clan = np.stack(clan, 0)
+        family = np.stack(family, 0)
+
+        self.input_ids = input_ids
+        self.input_mask = input_mask
+        self.lm_label_ids = lm_label_ids
+        self.clan = clan
+        self.family = family
+
+    def _pad_numpy(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+        batch_size = len(sequences)
+        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
+        array = np.zeros(shape, sequences[0].dtype) + constant_value
+
+        for arr, seq in zip(array, sequences):
+            arrslice = tuple(slice(dim) for dim in seq.shape)
+            arr[arrslice] = seq
+
+        return array
+
+
 class BertPreprocessBatch(object):
 
     def __init__(self, tokenizer: PfamTokenizer):
@@ -224,7 +253,6 @@ class BertPreprocessBatch(object):
         self.tokenizer = tokenizer
 
     def __call__(self, data):
-
         tokenize_primary = self.tokenizer.tokenize(data['primary'])
 
         print(len(data['primary']), len(tokenize_primary))
