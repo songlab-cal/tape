@@ -1,4 +1,4 @@
-from typing import Union, List, Tuple, Optional, Sequence
+from typing import Union, List, Tuple, Optional, Sequence, Dict, Any
 from abc import ABC, abstractmethod
 from pathlib import Path
 import pickle as pkl
@@ -199,7 +199,44 @@ class PaddedBatch(ABC):
         return array
 
 
-class PfamDataset(LMDBDataset):
+class TAPEDataset(LMDBDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 data_file: Union[str, Path],
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False,
+                 convert_tokens_to_ids: bool = True):
+
+        data_path = Path(data_path)
+
+        if tokenizer is None:
+            model_file = data_path / 'pfam.model'
+            if not (model_file.exists()):
+                raise FileNotFoundError(
+                    "TAPEDataset requires a tokenizer. If tokenizer is not provided it "
+                    "looks for files in data_path/pfam.model. You must either place the "
+                    "model file there or provide the tokenizer yourself.")
+            tokenizer = PfamTokenizer.from_pretrained(model_file)
+
+        self.tokenizer = tokenizer
+        self._convert_tokens_to_ids = convert_tokens_to_ids
+        super().__init__(data_path / data_file, in_memory)
+
+    def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Union[List[int], List[str]], List[int]]:
+        item = super().__getitem__(index)
+        tokens = self.tokenizer.tokenize(item['primary'])
+        tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
+
+        if self._convert_tokens_to_ids:
+            tokens = self.tokenizer.convert_tokens_to_ids(tokens)
+
+        attention_mask = [1] * len(tokens)
+
+        return item, tokens, attention_mask
+
+
+class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
         data_path (Union[str, Path]): Path to tape data root.
@@ -217,114 +254,46 @@ class PfamDataset(LMDBDataset):
             raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'holdout']")
 
         data_path = Path(data_path)
-        data_file = data_path / 'pfam' / f'pfam_{mode}.lmdb'
+        data_file = f'pfam/pfam_{mode}.lmdb'
 
-        super().__init__(data_file, in_memory)
-
-        if tokenizer is None:
-            model_file = data_path / 'pfam.model'
-            if not (model_file.exists()):
-                raise FileNotFoundError(
-                    "PfamDataset requires a tokenizer. If tokenizer is not provided it "
-                    "looks for files in data_path/pfam.model. You must either place the "
-                    "model file there or provide the tokenizer yourself.")
-            tokenizer = PfamTokenizer.from_pretrained(model_file)
-        self.tokenizer = tokenizer
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
 
     def __getitem__(self, index):
-        item = super().__getitem__(index)
-        tokenize_primary = self.tokenizer.tokenize(item['primary'])
+        item, tokens, attention_mask = super().__getitem__(index)
 
-        input_ids, input_mask, lm_label_ids = self.convert_example_to_features(
-            tokenize_primary)
+        masked_tokens, labels = self._apply_bert_mask(tokens)
 
-        # transform sample to features
-        input_ids, input_mask, lm_label_ids = self.convert_example_to_features(
-            tokenize_primary, self.tokenizer)
+        masked_token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
 
-        tensors = (
-            input_ids,
-            input_mask,
-            lm_label_ids,
-            item['clan'],
-            item['family'])
+        return masked_token_ids, attention_mask, labels, item['clan'], item['family']
 
-        return tensors
+    def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
+        labels = [-1] * len(tokens)
 
-    def convert_example_to_features(self, primary):
-        """
-        Convert a raw sample (pair of sentences as tokenized strings) into a proper training sample with
-        IDs, LM labels, input_mask, CLS and SEP tokens etc.
-        :param example: InputExample, containing sentence input as strings and is_next label
-        :param max_seq_length: int, maximum length of sequence.
-        :param tokenizer: Tokenizer
-        :return: InputFeatures, containing all inputs and labels of one sample as IDs (as used for model training)
-        """
-        primary, primary_label = self.random_word(primary)
-        # concatenate lm labels and account for CLS, SEP
-        # lm_label_ids = ([-1] + primary_label + [-1])
-        lm_label_ids = [-1] + primary_label + [-1]
-        # image_label = ([-1] + image_label)
-
-        # The convention in BERT is:
-        # (a) For sequence pairs:
-        #  tokens:   [CLS] is this jack ##son ##ville ? [SEP] no it is not . [SEP]
-        #  type_ids: 0   0  0    0    0     0       0 0    1  1  1  1   1 1
-        # (b) For single sequences:
-        #  tokens:   [CLS] the dog is hairy . [SEP]
-        #  type_ids: 0   0   0   0  0     0 0
-        #
-        # Where "type_ids" are used to indicate whether this is the first
-        # sequence or the second sequence. The embedding vectors for `type=0` and
-        # `type=1` were learned during pre-training and are added to the wordpiece
-        # embedding vector (and position vector). This is not *strictly* necessary
-        # since the [SEP] token unambigiously separates the sequences, but it makes
-        # it easier for the model to learn the concept of sequences.
-        #
-        # For classification tasks, the first vector (corresponding to [CLS]) is
-        # used as as the "sentence vector". Note that this only makes sense because
-        # the entire model is fine-tuned.
-        tokens = []
-
-        tokens.append(self.tokenizer.cls_token)
-
-        tokens = [self.tokenizer.cls_token] + primary + [self.tokenizer.sep_token]
-        input_ids = self.tokenizer.convert_tokens_to_ids(tokens)
-
-        # The mask has 1 for real tokens and 0 for padding tokens. Only real
-        # tokens are attended to.
-        input_mask = [1] * (len(input_ids))
-        return input_ids, input_mask, lm_label_ids
-
-    def _bert_mask_token(self, token: str) -> Tuple[str, int]:
-        prob = random.random()
-
-        if prob < 0.15:
-            prob /= 0.15
-            label = self.tokenizer.convert_token_to_id(token)
-
-            if prob < 0.8:
-                # 80% random change to mask token
-                token = self.tokenizer.mask_token
-            elif prob < 0.9:
-                # 10% chance to change to random token
-                token = self.tokenizer.convert_id_to_token(random.randint(0, self.tokenizer.vocab_size))
-            else:
-                # 10% chance to keep current token
+        for i, token in enumerate(tokens):
+            # Tokens begin and end with cls_token and sep_token, ignore these
+            if token in (self.tokenizer.cls_token, self.tokenizer.sep_token):
                 pass
-        else:
-            label = -1
 
-        return token, label
+            prob = random.random()
+            if prob < 0.15:
+                prob /= 0.15
+                label = self.tokenizer.convert_token_to_id(token)
+                labels[i] = label
 
-    def random_word(self, tokens: List[str], tokenizer: PfamTokenizer) -> Tuple[List[str], List[int]]:
-        """
-        Masking some random tokens for Language Model task with probabilities as in the original BERT paper.
-        :param tokens: list of str, tokenized sentence.
-        :param tokenizer: Tokenizer, object used for tokenization (we need it's vocab here)
-        :return: (list of str, list of int), masked tokens and related labels for LM prediction
-        """
-        return list(map(list, zip(*(self._bert_mask_token(token, tokenizer) for token in tokens))))  # type: ignore
+                if prob < 0.8:
+                    # 80% random change to mask token
+                    token = self.tokenizer.mask_token
+                elif prob < 0.9:
+                    # 10% chance to change to random token
+                    token = self.tokenizer.convert_id_to_token(random.randint(0, self.tokenizer.vocab_size))
+                else:
+                    # 10% chance to keep current token
+                    pass
+
+                tokens[i] = token
+
+        return tokens, labels
 
 
 class PfamBatch(PaddedBatch):
@@ -349,11 +318,11 @@ class FluorescenceBatch(PaddedBatch):
     pass
 
 
-class StabilitiyDataset(LMDBDataset):
+class StabilityDataset(LMDBDataset):
     pass
 
 
-class StabilitiyBatch(PaddedBatch):
+class StabilityBatch(PaddedBatch):
     pass
 
 
