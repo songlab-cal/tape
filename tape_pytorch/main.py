@@ -17,7 +17,7 @@ from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTrainin
                                   AdamW, WarmupLinearSchedule)
 from tensorboardX import SummaryWriter
 
-from datasets import PfamTokenizer, PfamDataset
+from datasets import PfamTokenizer, PfamDataset, PfamBatch
 
 logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -274,8 +274,12 @@ class TaskRunner(object):
         train_dataset = PfamDataset(self.data_dir, 'train', self.tokenizer)
         valid_dataset = PfamDataset(self.data_dir, 'valid', self.tokenizer)
 
-        train_loader = DataLoader(train_dataset, self.train_batch_size, self.num_workers)
-        valid_loader = DataLoader(valid_dataset, self.train_batch_size, self.num_workers)
+        train_loader = DataLoader(
+            train_dataset, self.train_batch_size, self.num_workers,
+            collate_fn=PfamBatch())
+        valid_loader = DataLoader(
+            valid_dataset, self.train_batch_size, self.num_workers,
+            collate_fn=PfamBatch())
 
         num_train_optimization_steps = len(train_dataset)
         num_train_optimization_steps /= self.train_batch_size

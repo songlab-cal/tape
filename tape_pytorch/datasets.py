@@ -219,7 +219,7 @@ class PfamDataset(LMDBDataset):
 
 class PfamBatch:
 
-    def __init__(self, batch):
+    def __call__(self, batch):
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
         input_ids = self._pad_numpy(input_ids, 0)  # pad input_ids with zeros
@@ -228,11 +228,7 @@ class PfamBatch:
         clan = np.stack(clan, 0)
         family = np.stack(family, 0)
 
-        self.input_ids = input_ids
-        self.input_mask = input_mask
-        self.lm_label_ids = lm_label_ids
-        self.clan = clan
-        self.family = family
+        return input_ids, input_mask, lm_label_ids, clan, family
 
     def _pad_numpy(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
         batch_size = len(sequences)
