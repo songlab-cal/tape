@@ -13,10 +13,11 @@ tf.enable_eager_execution()
 
 data_dir = Path('/home/rmrao/projects/tape/data/')
 
-files = str(data_dir / 'proteinnet' / 'contact_map_valid.tfrecord')
+files = str(data_dir / 'proteinnet' / 'contact_map_test.tfrecord')
 
 outfile = 'data/proteinnet/proteinnet_test.lmdb'
 data = tf.data.TFRecordDataset(files).map(data_utils.deserialize_proteinnet_sequence)
+vocab = {v: k for k, v in data_utils.PFAM_VOCAB.items()}
 
 
 def pythonify(tensor):
@@ -36,6 +37,7 @@ id_list = []
 with env.begin(write=True) as txn:
     for i, example in enumerate(tqdm(data)):
         item = {name: pythonify(tensor) for name, tensor in example.items()}
+        item['primary'] = ''.join(vocab[index] for index in item['primary'])
         id_ = str(i).encode()
         txn.put(id_, pkl.dumps(item))
         id_list.append(id_)
