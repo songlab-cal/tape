@@ -8,6 +8,7 @@ import random
 import lmdb
 import sentencepiece as spm
 import numpy as np
+import torch
 from torch.utils.data import Dataset
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,7 @@ class PaddedBatch(ABC):
     def __call__(self, batch: List[Sequence[np.ndarray]]) -> Tuple[np.ndarray]:
         return NotImplemented
 
-    def _pad_numpy(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+    def _pad(self, sequences: Sequence[np.ndarray], constant_value=0) -> torch.Tensor:
         batch_size = len(sequences)
         shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
         array = np.zeros(shape, sequences[0].dtype) + constant_value
@@ -196,7 +197,7 @@ class PaddedBatch(ABC):
             arrslice = tuple(slice(dim) for dim in seq.shape)
             arr[arrslice] = seq
 
-        return array
+        return torch.from_numpy(array)
 
 
 class TAPEDataset(LMDBDataset):
@@ -229,9 +230,9 @@ class TAPEDataset(LMDBDataset):
         tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
 
         if self._convert_tokens_to_ids:
-            tokens = self.tokenizer.convert_tokens_to_ids(tokens)
+            tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int32)
 
-        attention_mask = [1] * len(tokens)
+        attention_mask = np.ones([len(tokens)], dtype=np.int31)
 
         return item, tokens, attention_mask
 
@@ -263,12 +264,12 @@ class PfamDataset(TAPEDataset):
 
         masked_tokens, labels = self._apply_bert_mask(tokens)
 
-        masked_token_ids = self.tokenizer.convert_tokens_to_ids(tokens)
+        masked_token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int32)
 
         return masked_token_ids, attention_mask, labels, item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
-        labels = [-1] * len(tokens)
+        labels = np.zeros([len(tokens)], np.int63) - 1
 
         for i, token in enumerate(tokens):
             # Tokens begin and end with cls_token and sep_token, ignore these
@@ -301,11 +302,11 @@ class PfamBatch(PaddedBatch):
     def __call__(self, batch):
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
-        input_ids = self._pad_numpy(input_ids, 0)  # pad input_ids with zeros
-        input_mask = self._pad_numpy(input_mask, 0)  # pad input_mask with zeros
-        lm_label_ids = self._pad_numpy(lm_label_ids, -1)  # pad lm_label_ids with minus ones
-        clan = np.stack(clan, 0)
-        family = np.stack(family, 0)
+        input_ids = self._pad(input_ids, 0)  # pad input_ids with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
+        lm_label_ids = self._pad(lm_label_ids, -1)  # pad lm_label_ids with minus ones
+        clan = torch.IntTensor(clan)
+        family = torch.IntTensor(family)
 
         return input_ids, input_mask, lm_label_ids, clan, family
 
@@ -329,7 +330,6 @@ class FluorescenceDataset(TAPEDataset):
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
         return token_ids, attention_mask, item['log_fluorescence']
-
 
 
 class FluorescenceBatch(PaddedBatch):
