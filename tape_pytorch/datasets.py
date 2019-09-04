@@ -1,4 +1,5 @@
 from typing import Union, List, Tuple, Optional, Sequence, Dict, Any
+from copy import copy
 from abc import ABC, abstractmethod
 from pathlib import Path
 import pickle as pkl
@@ -264,11 +265,13 @@ class PfamDataset(TAPEDataset):
 
         masked_tokens, labels = self._apply_bert_mask(tokens)
 
-        masked_token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
+        masked_token_ids = np.array(
+            self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
 
         return masked_token_ids, attention_mask, labels, item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
+        masked_tokens = copy(tokens)
         labels = np.zeros([len(tokens)], np.int64) - 1
 
         for i, token in enumerate(tokens):
@@ -279,22 +282,22 @@ class PfamDataset(TAPEDataset):
             prob = random.random()
             if prob < 0.15:
                 prob /= 0.15
-                label = self.tokenizer.convert_token_to_id(token)
-                labels[i] = label
+                labels[i] = self.tokenizer.convert_token_to_id(token)
 
                 if prob < 0.8:
                     # 80% random change to mask token
                     token = self.tokenizer.mask_token
                 elif prob < 0.9:
                     # 10% chance to change to random token
-                    token = self.tokenizer.convert_id_to_token(random.randint(0, self.tokenizer.vocab_size))
+                    token = self.tokenizer.convert_id_to_token(
+                        random.randint(0, self.tokenizer.vocab_size - 1))
                 else:
                     # 10% chance to keep current token
                     pass
 
-                tokens[i] = token
+                masked_tokens[i] = token
 
-        return tokens, labels
+        return masked_tokens, labels
 
 
 class PfamBatch(PaddedBatch):
