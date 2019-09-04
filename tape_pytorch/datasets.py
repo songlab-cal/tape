@@ -230,9 +230,9 @@ class TAPEDataset(LMDBDataset):
         tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
 
         if self._convert_tokens_to_ids:
-            tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int32)
+            tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
 
-        attention_mask = np.ones([len(tokens)], dtype=np.int31)
+        attention_mask = np.ones([len(tokens)], dtype=np.int64)
 
         return item, tokens, attention_mask
 
@@ -264,12 +264,12 @@ class PfamDataset(TAPEDataset):
 
         masked_tokens, labels = self._apply_bert_mask(tokens)
 
-        masked_token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int32)
+        masked_token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
 
         return masked_token_ids, attention_mask, labels, item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
-        labels = np.zeros([len(tokens)], np.int63) - 1
+        labels = np.zeros([len(tokens)], np.int64) - 1
 
         for i, token in enumerate(tokens):
             # Tokens begin and end with cls_token and sep_token, ignore these
@@ -305,8 +305,8 @@ class PfamBatch(PaddedBatch):
         input_ids = self._pad(input_ids, 0)  # pad input_ids with zeros
         input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
         lm_label_ids = self._pad(lm_label_ids, -1)  # pad lm_label_ids with minus ones
-        clan = torch.IntTensor(clan)
-        family = torch.IntTensor(family)
+        clan = torch.LongTensor(clan)
+        family = torch.LongTensor(family)
 
         return input_ids, input_mask, lm_label_ids, clan, family
 
