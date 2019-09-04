@@ -12,6 +12,7 @@ import click
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTraining,
                                   AdamW, WarmupLinearSchedule)
@@ -133,7 +134,6 @@ class TaskRunner(object):
         self.from_pretrained = args.from_pretrained
         self.local_rank = args.local_rank
         self.bert_model = args.bert_model
-
 
     def _setup_model(self,
                      from_pretrained: bool,
@@ -405,7 +405,8 @@ class TaskRunner(object):
         for step, batch in enumerate(valid_loader):
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
             input_ids, input_mask, lm_label_ids, clan, family = batch
-            outputs = self.model(input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
+            outputs = self.model(
+                input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
             loss = outputs[0]
 
             if self.n_gpu > 1:
