@@ -331,7 +331,7 @@ class TaskRunner(object):
         num_train_steps = 0
         loss_tmp = 0.
 
-        torch.set_grad_enabled(False)
+        torch.set_grad_enabled(True)
         self.model.train()
 
         start_t = timer()
@@ -385,7 +385,7 @@ class TaskRunner(object):
                     f"[Iter: {num_train_steps}]",
                     f"[Time: {end_t - start_t:5.2f}s]",
                     f"[Loss: {loss_tmp:.5g}]",
-                    f"[LR: {optimizer.get_lr()[0]:.5g}]"]
+                    f"[LR: {scheduler.get_lr()[0]:.5g}]"]
                 start_t = end_t
 
                 logging.info(''.join(print_str))
