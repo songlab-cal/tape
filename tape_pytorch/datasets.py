@@ -154,7 +154,7 @@ class LMDBDataset(Dataset):
                         lock=False, readahead=False, meminit=False)
 
         with env.begin(write=False) as txn:
-            num_examples = len(pkl.loads(txn.get(b'keys')))
+            num_examples = pkl.loads(txn.get(b'num_examples'))
 
         if in_memory:
             cache = [None] * num_examples
