@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, Union
+import sys
 import random
 import math
 from time import strftime, gmtime
@@ -7,12 +8,14 @@ import logging
 from pathlib import Path
 import json
 from dataclasses import dataclass
+from datetime import datetime
 
 import click
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTraining,
                                   AdamW, WarmupLinearSchedule)
 from tensorboardX import SummaryWriter
@@ -26,24 +29,23 @@ except ImportError:
 
 from datasets import PfamTokenizer, PfamDataset, PfamBatch
 
-logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-    datefmt="%m/%d/%Y %H:%M:%S",
-    level=logging.INFO,
-)
 
 logger = logging.getLogger(__name__)
 
 
 class TBLogger:
 
-    def __init__(self, log_dir: Union[str, Path], exp_name: str):
-        log_dir = Path(log_dir) / exp_name
-        logger.info(f"tensorboard file at: {log_dir}")
-        self.logger = SummaryWriter(log_dir=str(log_dir))
+    def __init__(self, log_dir: Union[str, Path], exp_name: str, local_rank: int):
+        is_master = local_rank in (-1, 0)
+        if is_master:
+            log_dir = Path(log_dir) / exp_name
+            logger.info(f"tensorboard file at: {log_dir}")
+            self.logger = SummaryWriter(log_dir=str(log_dir))
+        self._is_master = is_master
 
     def line_plot(self, step, val, split, key, xlabel="None") -> None:
-        self.logger.add_scalar(split + "/" + key, val, step)
+        if self._is_master:
+            self.logger.add_scalar(split + "/" + key, val, step)
 
 
 @dataclass(frozen=False)
@@ -76,18 +78,24 @@ class TaskRunner(object):
 
     def __init__(self, args: TaskConfig):
         super().__init__()
-
-        if args.local_rank not in (-1, 0):
-            logger.setLevel(logging.WARNING)
-
-        save_path, exp_name = self._get_savepath(args.output_dir, args.exp_name)
-        save_path.mkdir(parents=True, exist_ok=True)
-
-        # save all the hidden parameters.
-        with (save_path / 'command.txt').open('w') as f:
-            print(args, end='\n\n', file=f)
-
+        is_master = args.local_rank in (-1, 0)
         device, n_gpu = self._setup_distributed(args.local_rank, args.cuda)
+
+        if is_master:
+            save_path, exp_name = self._get_savepath(args.output_dir, args.exp_name)
+            save_path.mkdir(parents=True, exist_ok=False)
+            # save all the hidden parameters.
+            with (save_path / 'command.txt').open('w') as f:
+                print(args, end='\n\n', file=f)
+
+            torch.distributed.barrier()
+        else:
+            torch.distributed.barrier()
+            save_files = Path(args.output_dir).iterdir()
+            save_path = max(save_files, key=self._path_to_datetime)
+            exp_name = save_path.name
+
+        self._setup_logging(save_path, args.local_rank)
 
         logger.info(
             f"device: {device} "
@@ -163,19 +171,41 @@ class TaskRunner(object):
         self.local_rank = args.local_rank
         self.bert_model = args.bert_model
 
+    def _path_to_datetime(self, path: Path) -> datetime:
+        name = path.name
+        datetime_string = name.split('_')[0]
+        year, month, day, time_string = datetime_string.split('-')
+        hour, minute, second = time_string.split(':')
+        pathdatetime = datetime(
+            int(year), int(month), int(day), int(hour), int(minute), int(second))
+        return pathdatetime
+
+    def _setup_logging(self, save_path: Path, local_rank: int):
+        log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
+        root_logger = logging.getLogger()
+        root_logger.setLevel(log_level)
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        file_handler = logging.FileHandler(save_path / 'log')
+        file_handler.setLevel(log_level)
+
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
+            datefmt="%y/%m/%d %H:%M:%S")
+        console_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
+
     def _setup_model(self,
                      from_pretrained: bool,
                      bert_model: str,
                      config: BertConfig):
-                     # fp16: bool) -> BertForPreTraining:
 
         if from_pretrained:
             model = BertForMaskedLM.from_pretrained(bert_model, config)
         else:
             model = BertForMaskedLM(config)
-
-        # if fp16:
-            # model.half()
 
         model.cuda()
 
@@ -225,28 +255,6 @@ class TaskRunner(object):
                         optimizer_grouped_parameters += [
                             {"params": [value], "lr": lr, "weight_decay": 0.0}
                         ]
-        # set different parameters for vision branch and lanugage branch.
-        # if fp16:
-            # try:
-                # from apex.optimizers import FP16_Optimizer
-                # from apex.optimizers import FusedAdam
-            # except ImportError:
-                # raise ImportError(
-                    # "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
-                # )
-#
-            # optimizer = FusedAdam(
-                # optimizer_grouped_parameters,
-                # lr=learning_rate,
-                # bias_correction=False,
-                # # max_grad_norm=1.0,
-            # )
-            # if loss_scale == 0:
-                # optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
-            # else:
-                # optimizer = FP16_Optimizer(optimizer, static_loss_scale=loss_scale)
-#
-        # else:
         if from_pretrained:
             optimizer = AdamW(
                 optimizer_grouped_parameters)
@@ -286,17 +294,18 @@ class TaskRunner(object):
             torch.cuda.manual_seed_all(seed)
 
     def train(self):
-        viz = TBLogger(self.log_dir, self.exp_name)
+        viz = TBLogger(self.log_dir, self.exp_name, self.local_rank)
 
         train_dataset = PfamDataset(self.data_dir, 'train', self.tokenizer)
         valid_dataset = PfamDataset(self.data_dir, 'valid', self.tokenizer)
+        sampler_type = (DistributedSampler if self.local_rank != -1 else RandomSampler)
 
         train_loader = DataLoader(
             train_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=PfamBatch(), shuffle=True)
+            collate_fn=PfamBatch(), sampler=sampler_type(train_dataset))
         valid_loader = DataLoader(
             valid_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=PfamBatch())
+            collate_fn=PfamBatch(), sampler=sampler_type(valid_dataset))
 
         num_train_optimization_steps = len(train_dataset)
         num_train_optimization_steps /= self.train_batch_size
@@ -327,11 +336,12 @@ class TaskRunner(object):
             # Save trained model
             logger.info("** ** * Saving trained model ** ** * ")
 
-            # Only save the model itself
-            model_to_save = getattr(self.model, 'module', self.model)
-            output_model_file = self.save_path / f"pytorch_model_{epoch_id}.bin"
+            if self.local_rank in (-1, 0):
+                # Only save the model itself
+                model_to_save = getattr(self.model, 'module', self.model)
+                output_model_file = self.save_path / f"pytorch_model_{epoch_id}.bin"
 
-            torch.save(model_to_save.state_dict(), output_model_file)
+                torch.save(model_to_save.state_dict(), output_model_file)
 
     def _run_train_epoch(self,
                          epoch_id: int,
@@ -387,7 +397,7 @@ class TaskRunner(object):
                 self.optimizer.zero_grad()
                 self._global_step += 1
 
-            if step % 20 == 0 and step != 0:
+            if (step + 1) % 20 == 0:
                 loss_tmp = loss_tmp / 20.0
                 end_t = timer()
                 time_stamp = strftime("%a %d %b %y %X", gmtime())
