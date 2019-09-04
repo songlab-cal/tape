@@ -12,11 +12,17 @@ import click
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTraining,
                                   AdamW, WarmupLinearSchedule)
 from tensorboardX import SummaryWriter
+
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as DDP
+    APEX_FOUND = True
+except ImportError:
+    APEX_FOUND = False
 
 from datasets import PfamTokenizer, PfamDataset, PfamBatch
 
@@ -58,7 +64,7 @@ class TaskConfig:
     seed: int = 42
     gradient_accumulation_steps: int = 1
     fp16: bool = False
-    loss_scale: float = 0
+    loss_scale: int = 0
     num_workers: int = 20
     from_pretrained: bool = False
     exp_name: Optional[str] = None
@@ -69,8 +75,10 @@ class TaskConfig:
 class TaskRunner(object):
 
     def __init__(self, args: TaskConfig):
-
         super().__init__()
+
+        if args.local_rank not in (-1, 0):
+            logger.setLevel(logging.WARNING)
 
         save_path, exp_name = self._get_savepath(args.output_dir, args.exp_name)
         save_path.mkdir(parents=True, exist_ok=True)
@@ -101,11 +109,31 @@ class TaskRunner(object):
         config = BertConfig.from_json_file(args.config_file)
 
         model = self._setup_model(
-            args.from_pretrained, args.bert_model, config, args.local_rank, n_gpu, args.fp16)
+            args.from_pretrained, args.bert_model, config)  # , args.local_rank, n_gpu, args.fp16)
+
+        optimizer = self._setup_optimizer(
+            model, args.from_pretrained, args.fp16,
+            args.learning_rate, args.pretrained_weight,
+            args.loss_scale)
+
+        if args.fp16:
+            if not APEX_FOUND:
+                raise ImportError(
+                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+            model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
+
+        if args.local_rank != -1:
+            if not APEX_FOUND:
+                raise ImportError(
+                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+            model = DDP(model)
+        elif n_gpu > 1:
+            model = nn.DataParallel(model)
 
         # Store defaults
         self.exp_name = exp_name
         self.model = model
+        self.optimizer = optimizer
         self.config = config
         self.tokenizer = tokenizer
         self.save_path = save_path
@@ -138,31 +166,19 @@ class TaskRunner(object):
     def _setup_model(self,
                      from_pretrained: bool,
                      bert_model: str,
-                     config: BertConfig,
-                     local_rank: int,
-                     n_gpu: int,
-                     fp16: bool) -> BertForPreTraining:
+                     config: BertConfig):
+                     # fp16: bool) -> BertForPreTraining:
 
         if from_pretrained:
             model = BertForMaskedLM.from_pretrained(bert_model, config)
         else:
             model = BertForMaskedLM(config)
 
-        if fp16:
-            model.half()
-
-        if local_rank != -1:
-            try:
-                from apex.parallel import DistributedDataParallel as DDP
-            except ImportError:
-                raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex "
-                    "to use distributed and fp16 training.")
-            model = DDP(model)
-        elif n_gpu > 1:
-            model = nn.DataParallel(model)
+        # if fp16:
+            # model.half()
 
         model.cuda()
+
         return model
 
     def _setup_optimizer(self,
@@ -170,7 +186,7 @@ class TaskRunner(object):
                          from_pretrained: bool,
                          fp16: bool,
                          learning_rate: float,
-                         pretrained_weight: str,
+                         pretrained_weight: Optional[str],
                          loss_scale: int):
         no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
         if not from_pretrained:
@@ -190,6 +206,7 @@ class TaskRunner(object):
                 },
             ]
         else:
+            assert pretrained_weight is not None
             bert_weight_name = json.load(open("config/" + pretrained_weight + "_weight_name.json", "r"))
             optimizer_grouped_parameters = []
             for key, value in dict(model.named_parameters()).items():
@@ -209,32 +226,32 @@ class TaskRunner(object):
                             {"params": [value], "lr": lr, "weight_decay": 0.0}
                         ]
         # set different parameters for vision branch and lanugage branch.
-        if fp16:
-            try:
-                from apex.optimizers import FP16_Optimizer
-                from apex.optimizers import FusedAdam
-            except ImportError:
-                raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
-                )
-
-            optimizer = FusedAdam(
-                optimizer_grouped_parameters,
-                lr=learning_rate,
-                bias_correction=False,
-                max_grad_norm=1.0,
-            )
-            if loss_scale == 0:
-                optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
-            else:
-                optimizer = FP16_Optimizer(optimizer, static_loss_scale=loss_scale)
-
+        # if fp16:
+            # try:
+                # from apex.optimizers import FP16_Optimizer
+                # from apex.optimizers import FusedAdam
+            # except ImportError:
+                # raise ImportError(
+                    # "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training."
+                # )
+#
+            # optimizer = FusedAdam(
+                # optimizer_grouped_parameters,
+                # lr=learning_rate,
+                # bias_correction=False,
+                # # max_grad_norm=1.0,
+            # )
+            # if loss_scale == 0:
+                # optimizer = FP16_Optimizer(optimizer, dynamic_loss_scale=True)
+            # else:
+                # optimizer = FP16_Optimizer(optimizer, static_loss_scale=loss_scale)
+#
+        # else:
+        if from_pretrained:
+            optimizer = AdamW(
+                optimizer_grouped_parameters)
         else:
-            if from_pretrained:
-                optimizer = AdamW(
-                    optimizer_grouped_parameters)
-            else:
-                optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
+            optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
 
         return optimizer
 
@@ -275,10 +292,10 @@ class TaskRunner(object):
         valid_dataset = PfamDataset(self.data_dir, 'valid', self.tokenizer)
 
         train_loader = DataLoader(
-            train_dataset, self.train_batch_size, self.num_workers,
-            collate_fn=PfamBatch())
+            train_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
+            collate_fn=PfamBatch(), shuffle=True)
         valid_loader = DataLoader(
-            valid_dataset, self.train_batch_size, self.num_workers,
+            valid_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
             collate_fn=PfamBatch())
 
         num_train_optimization_steps = len(train_dataset)
@@ -290,12 +307,8 @@ class TaskRunner(object):
         if self.local_rank != -1:
             num_train_optimization_steps //= torch.distributed.get_world_size()
 
-        optimizer = self._setup_optimizer(
-            self.model, self.from_pretrained, self.fp16,
-            self.learning_rate, self.pretrained_weight, self.loss_scale)
-
         scheduler = WarmupLinearSchedule(
-            optimizer, warmup_steps=self.warmup_steps, t_total=num_train_optimization_steps)
+            self.optimizer, warmup_steps=self.warmup_steps, t_total=num_train_optimization_steps)
 
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_dataset))
@@ -307,7 +320,7 @@ class TaskRunner(object):
 
         for epoch_id in range(self.num_train_epochs):
             self._run_train_epoch(
-                epoch_id, train_loader, optimizer, scheduler, viz)
+                epoch_id, train_loader, scheduler, viz)
             self._run_valid_epoch(
                 epoch_id, valid_loader, viz)
 
@@ -323,7 +336,6 @@ class TaskRunner(object):
     def _run_train_epoch(self,
                          epoch_id: int,
                          train_loader: DataLoader,
-                         optimizer: torch.optim.Optimizer,
                          scheduler: WarmupLinearSchedule,
                          viz: TBLogger):
         train_loss = 0
@@ -348,7 +360,9 @@ class TaskRunner(object):
             if self.gradient_accumulation_steps > 1:
                 loss = loss / self.gradient_accumulation_steps
             if self.fp16:
-                optimizer.backward(loss)
+                with amp.scale_loss(loss, self.optimizer) as scaled_loss:
+                    scaled_loss.backward()
+                # self.optimizer.backward(loss)
             else:
                 loss.backward()
 
@@ -368,9 +382,9 @@ class TaskRunner(object):
             if (step + 1) % self.gradient_accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(), self.max_grad_norm)
-                optimizer.step()
+                self.optimizer.step()
                 scheduler.step()
-                optimizer.zero_grad()
+                self.optimizer.zero_grad()
                 self._global_step += 1
 
             if step % 20 == 0 and step != 0:
@@ -388,7 +402,7 @@ class TaskRunner(object):
                     f"[LR: {scheduler.get_lr()[0]:.5g}]"]
                 start_t = end_t
 
-                logging.info(''.join(print_str))
+                logger.info(''.join(print_str))
                 loss_tmp = 0
 
     def _run_valid_epoch(self,
@@ -418,13 +432,13 @@ class TaskRunner(object):
             progress_string = f"\r Evaluating split val [{step + 1}/{num_batches}\t " \
                               f"Time: {end_t - start_t:5.2f}s]"
 
-            logging.info(progress_string)
+            logger.info(progress_string)
 
         eval_loss /= num_batches
 
         print_str = "Evaluation: [Loss: {eval_loss:.5g}]"
 
-        logging.info(print_str)
+        logger.info(print_str)
         viz.line_plot(epoch_id, eval_loss, "loss", "val")
 
 
@@ -444,10 +458,10 @@ class TaskRunner(object):
 @click.option('--seed', default=42, type=int)
 @click.option('--gradient-accumulation-steps', default=1, type=int)
 @click.option('--fp16/--no-fp16', default=False)
-@click.option('--loss-scale', default=0, type=float)
+@click.option('--loss-scale', default=0, type=int)
 @click.option('--from-pretrained', is_flag=True)
 @click.option('--exp-name', default=None, type=str)
-@click.option('--local-rank', default=-1, type=int)
+@click.option('--local_rank', default=-1, type=int)
 @click.option('--bert-model', default=str, type=str)
 def main(data_dir: str = 'data',
          vocab_file: str = 'data/pfam.model',
@@ -465,7 +479,7 @@ def main(data_dir: str = 'data',
          seed: int = 42,
          gradient_accumulation_steps: int = 1,
          fp16: bool = False,
-         loss_scale: float = 0,
+         loss_scale: int = 0,
          num_workers: int = 20,
          from_pretrained: bool = False,
          exp_name: Optional[str] = None,
