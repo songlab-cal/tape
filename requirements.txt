@@ -1,0 +1,10 @@
+cython
+ipython
+pytorch>=1.0
+torchvision
+cudatoolkit
+tqdm
+pytorch-transformers
+click
+tensorboardX
+sentencepiece
