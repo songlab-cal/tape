@@ -339,7 +339,9 @@ class TaskRunner(object):
             self._iter_id += 1
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
             input_ids, input_mask, lm_label_ids, clan, family = batch
-            loss = self.model(input_ids, input_mask, lm_label_ids, clan, family)
+            outputs = self.model(
+                input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
+            loss = outputs[0]
 
             if self.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu
@@ -403,7 +405,8 @@ class TaskRunner(object):
         for step, batch in enumerate(valid_loader):
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
             input_ids, input_mask, lm_label_ids, clan, family = batch
-            loss = self.model(input_ids, input_mask, lm_label_ids, clan, family)
+            outputs = self.model(input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
+            loss = outputs[0]
 
             if self.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu
