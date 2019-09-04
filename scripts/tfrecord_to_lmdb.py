@@ -75,14 +75,16 @@ flist_names = ['pfam_train.lmdb', 'pfam_valid.lmdb', 'proteinnet_train.lmdb']
 for flist in file_lists:
     if isinstance(flist, list):
         name = flist_names.pop(0)
-        deserialization_func = deserialize_funcs[flist[0].relative_to(data_dir).parts[0]]
+        task_name = flist[0].relative_to(data_dir).parts[0]
+        deserialization_func = deserialize_funcs[task_name]
     else:
         name = flist.with_suffix('.lmdb').name
-        deserialization_func = deserialize_funcs[flist.relative_to(data_dir).parts[0]]
+        task_name = flist.relative_to(data_dir).parts[0]
+        deserialization_func = deserialize_funcs[task_name]
 
     name = name.replace('pfam31', 'pfam')
     name = name.replace('contact_map', 'proteinnet')
 
-    outfile = out_dir / name
+    outfile = out_dir / task_name / name
     print("Converting", name)
     convert(flist, outfile, deserialization_func)
