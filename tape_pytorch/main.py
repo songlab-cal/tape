@@ -240,7 +240,7 @@ class TaskRunner(object):
 
     def _get_savepath(self, output_dir: str, exp_name: Optional[str]) -> Tuple[Path, str]:
         if exp_name is None:
-            time_stamp = strftime("%d-%b-%y-%X-%a", gmtime())
+            time_stamp = strftime("%y-%m-%d-%H:%M:%S", gmtime())
             exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
 
         save_path = Path(output_dir) / exp_name
