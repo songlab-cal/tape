@@ -310,24 +310,78 @@ class PfamBatch(PaddedBatch):
         return input_ids, input_mask, lm_label_ids, clan, family
 
 
-class FluorescenceDataset(LMDBDataset):
-    pass
+class FluorescenceDataset(TAPEDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 mode: str,
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False):
+
+        if mode not in ('train', 'valid', 'test'):
+            raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'test']")
+
+        data_path = Path(data_path)
+        data_file = f'fluorescence/fluorescence_{mode}.lmdb'
+
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+
+    def __getitem__(self, index: int):
+        item, token_ids, attention_mask = super().__getitem__(index)
+        return token_ids, attention_mask, item['log_fluorescence']
+
 
 
 class FluorescenceBatch(PaddedBatch):
     pass
 
 
-class StabilityDataset(LMDBDataset):
-    pass
+class StabilityDataset(TAPEDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 mode: str,
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False):
+
+        if mode not in ('train', 'valid', 'test'):
+            raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'test']")
+
+        data_path = Path(data_path)
+        data_file = f'stability/stability_{mode}.lmdb'
+
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+
+    def __getitem__(self, index: int):
+        item, token_ids, attention_mask = super().__getitem__(index)
+        return token_ids, attention_mask, item['stability_score']
 
 
 class StabilityBatch(PaddedBatch):
     pass
 
 
-class RemoteHomologyDataset(LMDBDataset):
-    pass
+class RemoteHomologyDataset(TAPEDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 mode: str,
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False):
+
+        if mode not in ('train', 'valid', 'test_fold_holdout', 'test_family_holdout', 'test_superfamily_holdout'):
+            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+                             f"['train', 'valid', 'test_fold_holdout', "
+                             f"'test_family_holdout', 'test_superfamily_holdout']")
+
+        data_path = Path(data_path)
+        data_file = f'remote_homology/remote_homology_{mode}.lmdb'
+
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+
+    def __getitem__(self, index: int):
+        item, token_ids, attention_mask = super().__getitem__(index)
+        return token_ids, attention_mask, item['fold_label']
 
 
 class RemoteHomologyBatch(PaddedBatch):
