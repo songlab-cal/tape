@@ -91,3 +91,20 @@ def test_stability_dataset():
 
         assert 0 <= ids.min() <= ids.max() < dataset.tokenizer.vocab_size
         assert np.all((attention_mask == 0) | (attention_mask == 1))
+
+
+def test_proteinnet_dataset():
+    dataset = datasets.ProteinnetDataset(DATA_PATH, 'train')
+
+    # Test 10 random accesses
+    for _ in range(10):
+        ids, attention_mask, contact_map, valid_mask = dataset[random.randint(0, len(dataset) - 1)]
+        assert isinstance(ids, np.ndarray)
+        assert isinstance(attention_mask, np.ndarray)
+        assert isinstance(contact_map, np.ndarray)
+        assert isinstance(valid_mask, np.ndarray)
+
+        assert 0 <= ids.min() <= ids.max() < dataset.tokenizer.vocab_size
+        assert np.all((attention_mask == 0) | (attention_mask == 1))
+        assert contact_map.shape == (valid_mask.size, valid_mask.size)
+        assert np.all((valid_mask == 0) | (valid_mask == 1))

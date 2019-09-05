@@ -11,6 +11,7 @@ import sentencepiece as spm
 import numpy as np
 import torch
 from torch.utils.data import Dataset
+from scipy.spatial.distance import pdist, squareform
 
 logger = logging.getLogger(__name__)
 
@@ -391,8 +392,29 @@ class RemoteHomologyBatch(PaddedBatch):
     pass
 
 
-class ProteinnetDataset:
-    pass
+class ProteinnetDataset(TAPEDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 mode: str,
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False):
+
+        if mode not in ('train', 'valid', 'test'):
+            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+                             f"['train', 'valid', 'test']")
+
+        data_path = Path(data_path)
+        data_file = f'proteinnet/proteinnet_{mode}.lmdb'
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+
+    def __getitem__(self, index: int):
+        item, token_ids, attention_mask = super().__getitem__(index)
+
+        valid_mask = item['valid_mask']
+        contact_map = squareform(pdist(item['tertiary'])) < 8.0
+
+        return token_ids, attention_mask, contact_map, valid_mask
 
 
 class ProteinnetBatch(PaddedBatch):

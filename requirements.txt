@@ -7,3 +7,4 @@ pytorch-transformers
 click
 tensorboardX
 sentencepiece
+scipy
