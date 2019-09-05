@@ -1,9 +1,10 @@
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_transformers import BertForMaskedLM
+from pytorch_transformers import BertForMaskedLM, BertConfig
 from torch.nn.utils.weight_norm import weight_norm
 
 
+TAPEConfig = BertConfig
 Transformer = BertForMaskedLM
 
 

@@ -114,10 +114,10 @@ class TaskRunner(object):
 
         tokenizer = PfamTokenizer.from_pretrained(args.vocab_file)
 
-        config = BertConfig.from_json_file(args.config_file)
+        bert_config = BertConfig.from_json_file(args.config_file)
 
         model = self._setup_model(
-            args.from_pretrained, args.bert_model, config)  # , args.local_rank, n_gpu, args.fp16)
+            args.from_pretrained, args.bert_model, bert_config)  # , args.local_rank, n_gpu, args.fp16)
 
         optimizer = self._setup_optimizer(
             model, args.from_pretrained, args.fp16,
