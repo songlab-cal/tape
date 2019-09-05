@@ -24,7 +24,7 @@ def test_pfam_dataset():
 
 
 def test_secondary_structure_dataset():
-    dataset = datasets.SecondaryStructureDataset(DATA_PATH, 'train')
+    dataset = datasets.SecondaryStructureDataset(DATA_PATH, 'train', num_classes=3)
 
     # Test 10 random accesses
     for _ in range(10):
@@ -35,6 +35,20 @@ def test_secondary_structure_dataset():
 
         assert 0 <= ids.min() <= ids.max() < dataset.tokenizer.vocab_size
         assert np.all((attention_mask == 0) | (attention_mask == 1))
+        assert 0 <= structure_labels.min() <= structure_labels.max() < 3
+
+    dataset = datasets.SecondaryStructureDataset(DATA_PATH, 'train', num_classes=8)
+
+    # Test 10 random accesses
+    for _ in range(10):
+        ids, attention_mask, structure_labels = dataset[random.randint(0, len(dataset) - 1)]
+        assert isinstance(ids, np.ndarray)
+        assert isinstance(attention_mask, np.ndarray)
+        assert isinstance(structure_labels, np.ndarray)
+
+        assert 0 <= ids.min() <= ids.max() < dataset.tokenizer.vocab_size
+        assert np.all((attention_mask == 0) | (attention_mask == 1))
+        assert 0 <= structure_labels.min() <= structure_labels.max() < 8
 
 
 def test_remote_homology_dataset():

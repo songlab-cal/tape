@@ -399,8 +399,29 @@ class ProteinnetBatch(PaddedBatch):
     pass
 
 
-class SecondaryStructureDataset:
-    pass
+class SecondaryStructureDataset(TAPEDataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 mode: str,
+                 tokenizer: Optional[PfamTokenizer] = None,
+                 in_memory: bool = False,
+                 num_classes: int = 3):
+
+        if mode not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
+            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+                             f"['train', 'valid', 'casp12', "
+                             f"'ts115', 'cb513']")
+
+        data_path = Path(data_path)
+        data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
+        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+
+        self._num_classes = num_classes
+
+    def __getitem__(self, index: int):
+        item, token_ids, attention_mask = super().__getitem__(index)
+        return token_ids, attention_mask, item[f'ss{self._num_classes}']
 
 
 class SecondaryStructureBatch(PaddedBatch):
