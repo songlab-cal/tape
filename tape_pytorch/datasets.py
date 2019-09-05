@@ -332,7 +332,7 @@ class FluorescenceDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item['log_fluorescence']
+        return token_ids, attention_mask, float(item['log_fluorescence'][0])
 
 
 class FluorescenceBatch(PaddedBatch):
@@ -357,7 +357,7 @@ class StabilityDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item['stability_score']
+        return token_ids, attention_mask, float(item['stability_score'][0])
 
 
 class StabilityBatch(PaddedBatch):
