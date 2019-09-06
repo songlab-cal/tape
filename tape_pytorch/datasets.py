@@ -1,4 +1,4 @@
-from typing import Union, List, Tuple, Optional, Sequence, Dict, Any
+from typing import Union, List, Tuple, Sequence, Dict, Any
 from copy import copy
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -86,7 +86,7 @@ class TAPEDataset(LMDBDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  data_file: Union[str, Path],
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
 
@@ -124,7 +124,7 @@ class PfamDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'holdout'):
@@ -194,7 +194,7 @@ class FluorescenceDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -219,7 +219,7 @@ class StabilityDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -244,7 +244,7 @@ class RemoteHomologyDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test_fold_holdout', 'test_family_holdout', 'test_superfamily_holdout'):
@@ -271,7 +271,7 @@ class ProteinnetDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -300,7 +300,7 @@ class SecondaryStructureDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
                  in_memory: bool = False,
                  num_classes: int = 3):
 

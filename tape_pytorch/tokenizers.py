@@ -13,6 +13,19 @@ class TAPETokenizer(ABC):
     Abstract Tokenizer Class
     """
 
+    def __init__(self,
+                 unk_token: str = "<unk>",
+                 sep_token: str = "<sep>",
+                 pad_token: str = "<pad>",
+                 cls_token: str = "<cls>",
+                 mask_token: str = "<mask>"):
+
+        self.unk_token = unk_token
+        self.sep_token = sep_token
+        self.pad_token = pad_token
+        self.cls_token = cls_token
+        self.mask_token = mask_token
+
     @abstractproperty
     def vocab_size(self) -> int:
         return len(DummyTokenizer.TOKENS)
@@ -70,19 +83,6 @@ class DummyTokenizer(TAPETokenizer):
               "K", "L", "M", "N", "O", "P", "Q", "R", "S",
               "T", "U", "V", "W", "X", "Y", "Z"]
     VOCAB = {token: i for i, token in enumerate(TOKENS)}
-
-    def __init__(self, *,  # only accept keyword arguments
-                 unk_token: str = "<unk>",
-                 sep_token: str = "<sep>",
-                 pad_token: str = "<pad>",
-                 cls_token: str = "<cls>",
-                 mask_token: str = "<mask>"):
-
-        self.unk_token = unk_token
-        self.sep_token = sep_token
-        self.pad_token = pad_token
-        self.cls_token = cls_token
-        self.mask_token = mask_token
 
     @property
     def vocab_size(self) -> int:
@@ -202,11 +202,8 @@ class PfamTokenizer(TAPETokenizer):
         sp.Load(str(model_file))
 
         self.sp = sp
-        self.unk_token = unk_token
-        self.sep_token = sep_token
-        self.pad_token = pad_token
-        self.cls_token = cls_token
-        self.mask_token = mask_token
+
+        super().__init__(unk_token, sep_token, pad_token, cls_token, mask_token)
 
     @property
     def vocab_size(self) -> int:
