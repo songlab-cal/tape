@@ -13,7 +13,6 @@ CONFIG_PATH = Path(__file__).parent.parent / 'config'
 
 config_file = CONFIG_PATH / 'bert_config.json'
 config = models.TAPEConfig.from_json_file(config_file)
-config.output_hidden_states = True
 
 model = models.Transformer(config)
 model.cuda()
@@ -26,13 +25,13 @@ def test_floatpredict_model():
     def run_dummy_pass(*size):
         inputs = torch.randint(config.vocab_size, size).cuda()
         attention_mask = torch.randint(2, size).cuda()
-        labels = torch.randn(size[0])
+        labels = torch.randn(size[0], 1).cuda()
 
         loss, output = task_model(
             inputs, attention_mask=attention_mask, label=labels)
 
         assert not math.isnan(loss.item())
-        assert tuple(output.size()) == size[:1]
+        assert tuple(output.size()) == (size[0], 1)
 
     run_dummy_pass(4, 16)
     run_dummy_pass(1, 1000)
