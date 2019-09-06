@@ -39,14 +39,16 @@ class TAPETokenizer(ABC):
         """ Converts a token (str/unicode) in an id using the vocab. """
         return NotImplemented
 
+    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
+        return [self.convert_token_to_id(token) for token in tokens]
+
     @abstractmethod
     def convert_id_to_token(self, index: int) -> str:
         """Converts an index (integer) in a token (string/unicode) using the vocab."""
         return NotImplemented
 
-    @abstractmethod
-    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
-        return NotImplemented
+    def convert_ids_to_tokens(self, indices: List[int]) -> List[str]:
+        return [self.convert_id_to_token(id_) for id_ in indices]
 
     @abstractmethod
     def convert_tokens_to_string(self, tokens: str) -> str:
@@ -104,9 +106,6 @@ class DummyTokenizer(TAPETokenizer):
             return DummyTokenizer.TOKENS[index]
         except IndexError:
             raise IndexError(f"Unrecognized index: '{index}'")
-
-    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
-        return [self.convert_token_to_id(token) for token in tokens]
 
     def convert_tokens_to_string(self, tokens: str) -> str:
         """ Converts a sequence of tokens (string) in a single string. """
@@ -219,9 +218,6 @@ class PfamTokenizer(TAPETokenizer):
     def convert_id_to_token(self, index: int) -> str:
         """Converts an index (integer) in a token (string/unicode) using the vocab."""
         return self.sp.id_to_piece(index)
-
-    def convert_tokens_to_ids(self, tokens: List[str]) -> List[int]:
-        return [self.convert_token_to_id(token) for token in tokens]
 
     def convert_tokens_to_string(self, tokens: str) -> str:
         """ Converts a sequence of tokens (string) in a single string. """
