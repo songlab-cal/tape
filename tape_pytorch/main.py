@@ -338,10 +338,8 @@ class TaskRunner(object):
 
             if self.local_rank in (-1, 0):
                 # Only save the model itself
-                model_to_save = getattr(self.model, 'module', self.model)
-                output_model_file = self.save_path / f"pytorch_model_{epoch_id}.bin"
-
-                torch.save(model_to_save.state_dict(), output_model_file)
+                output_model_dir = self.save_path / f"pytorch_model_{epoch_id}"
+                self.model.save_pretrained(output_model_dir)
 
     def _run_train_epoch(self,
                          epoch_id: int,
