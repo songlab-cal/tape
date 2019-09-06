@@ -57,3 +57,23 @@ def test_classpredict_model():
 
     run_dummy_pass(4, 16)
     run_dummy_pass(1, 1000)
+
+
+def test_seqpredict_model():
+    num_classes = random.randint(15, 128)
+    task_model = models.SequenceToSequenceClassificationModel(model, config, num_classes)
+    task_model.eval().cuda()
+
+    def run_dummy_pass(*size):
+        inputs = torch.randint(config.vocab_size, size).cuda()
+        attention_mask = torch.randint(2, size).cuda()
+        labels = torch.randint(num_classes, size).cuda()
+
+        loss, output = task_model(
+            inputs, attention_mask=attention_mask, label=labels)
+
+        assert not math.isnan(loss.item())
+        assert tuple(output.size()) == size + (num_classes,)
+
+    run_dummy_pass(4, 16)
+    run_dummy_pass(1, 1000)

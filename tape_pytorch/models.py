@@ -135,6 +135,7 @@ class SequenceClassificationModel(nn.Module):
 class SequenceToSequenceClassificationModel(nn.Module):
 
     def __init__(self, base_model, config, num_classes: int):
+        super().__init__()
         self.base_model = base_model
         self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
 
