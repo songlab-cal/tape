@@ -142,7 +142,7 @@ class TaskRunner(object):
         self.exp_name = exp_name
         self.model = model
         self.optimizer = optimizer
-        self.config = config
+        self.config = args
         self.tokenizer = tokenizer
         self.save_path = save_path
         self.device = device
