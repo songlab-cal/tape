@@ -12,7 +12,7 @@ import torch
 from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
-from tokenizers import PfamTokenizer
+import tape_pytorch.tokenizers as tokenizers
 
 logger = logging.getLogger(__name__)
 
@@ -86,20 +86,15 @@ class TAPEDataset(LMDBDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  data_file: Union[str, Path],
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
 
         data_path = Path(data_path)
 
-        if tokenizer is None:
+        if isinstance(tokenizer, str):
             model_file = data_path / 'pfam.model'
-            if not (model_file.exists()):
-                raise FileNotFoundError(
-                    "TAPEDataset requires a tokenizer. If tokenizer is not provided it "
-                    "looks for files in data_path/pfam.model. You must either place the "
-                    "model file there or provide the tokenizer yourself.")
-            tokenizer = PfamTokenizer.from_pretrained(model_file)
+            tokenizer = tokenizers.get(tokenizer, model_file)
 
         self.tokenizer = tokenizer
         self._convert_tokens_to_ids = convert_tokens_to_ids
@@ -129,7 +124,7 @@ class PfamDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'holdout'):
@@ -199,7 +194,7 @@ class FluorescenceDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -224,7 +219,7 @@ class StabilityDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -249,7 +244,7 @@ class RemoteHomologyDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test_fold_holdout', 'test_family_holdout', 'test_superfamily_holdout'):
@@ -276,7 +271,7 @@ class ProteinnetDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -305,7 +300,7 @@ class SecondaryStructureDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Optional[PfamTokenizer] = None,
+                 tokenizer: Optional[Union[str, tokenizers.TAPETokenizer]] = 'pfam',
                  in_memory: bool = False,
                  num_classes: int = 3):
 
