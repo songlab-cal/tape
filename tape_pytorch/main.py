@@ -27,7 +27,8 @@ try:
 except ImportError:
     APEX_FOUND = False
 
-from datasets import PfamTokenizer, PfamDataset, PfamBatch
+from tokenizers import PfamTokenizer
+from datasets import PfamDataset, PfamBatch
 
 
 logger = logging.getLogger(__name__)
@@ -57,7 +58,7 @@ class TaskConfig:
     output_dir: str = 'results'
     config_file: str = 'config/bert_config.json'
     # max_seq_length: Optional[int] = None
-    train_batch_size: int = 512
+    train_batch_size: int = 4
     learning_rate: float = 1e-4
     num_train_epochs: int = 10
     warmup_steps: int = 10000
@@ -88,7 +89,8 @@ class TaskRunner(object):
             with (save_path / 'command.txt').open('w') as f:
                 print(args, end='\n\n', file=f)
 
-            torch.distributed.barrier()
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
         else:
             torch.distributed.barrier()
             save_files = Path(args.output_dir).iterdir()
@@ -457,7 +459,7 @@ class TaskRunner(object):
 @click.option('--log-dir', default='logs', type=click.Path())
 @click.option('--output-dir', default='results', type=click.Path())
 @click.option('--config-file', default='config/bert_config.json', type=click.Path(exists=True, dir_okay=False))
-@click.option('--train-batch-size', default=512, type=int)
+@click.option('--train-batch-size', default=4, type=int)
 @click.option('--learning-rate', default=1e-4, type=float)
 @click.option('--num-train-epochs', default=10, type=int)
 @click.option('--warmup-steps', default=10000, type=int)
@@ -478,7 +480,7 @@ def main(data_dir: str = 'data',
          output_dir: str = 'results',
          config_file: str = 'config/bert_config.json',
          # max_seq_length: Optional[int] = None,
-         train_batch_size: int = 512,
+         train_batch_size: int = 4,
          learning_rate: float = 1e-4,
          num_train_epochs: int = 10,
          warmup_steps: int = 10000,
