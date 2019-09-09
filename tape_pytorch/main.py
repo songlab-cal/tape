@@ -66,6 +66,7 @@ class TBLogger:
     def line_plot(self, step, val, split, key, xlabel="None") -> None:
         if self._is_master:
             self.logger.add_scalar(split + "/" + key, val, step)
+            self.logger.flush()
 
 
 @dataclass(frozen=False)
