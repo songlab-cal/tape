@@ -89,7 +89,7 @@ class TAPEDataset(LMDBDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  data_file: Union[str, Path],
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'pfam',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
 
@@ -97,8 +97,9 @@ class TAPEDataset(LMDBDataset):
 
         if isinstance(tokenizer, str):
             model_file = data_path / 'pfam.model'
-            tokenizer = tokenizers.get(tokenizer, model_file)
+            tokenizer = registry.get_tokenizer_class(tokenizer)(model_file=model_file)
 
+        assert isinstance(tokenizer, tokenizers.TAPETokenizer)
         self.tokenizer = tokenizer
         self._convert_tokens_to_ids = convert_tokens_to_ids
         super().__init__(data_path / data_file, in_memory)

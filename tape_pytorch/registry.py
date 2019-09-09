@@ -12,6 +12,7 @@ class Registry:
     model_name_mapping: Dict[str, Type[nn.Module]] = {}
     task_model_name_mapping: Dict[str, Type[nn.Module]] = {}
     collate_fn_name_mapping: Dict[str, Type[Callable]] = {}
+    tokenizer_name_mapping: Dict[str, Type] = {}
 
     @classmethod
     def register_dataset(cls, name: str) -> Callable[[Type[Dataset]], Type[Dataset]]:
@@ -53,11 +54,11 @@ class Registry:
                 ...
         """
 
-        def wrap(task_cls: Type[nn.Module]) -> Type[nn.Module]:
-            assert issubclass(task_cls, nn.Module), \
+        def wrap(model_cls: Type[nn.Module]) -> Type[nn.Module]:
+            assert issubclass(model_cls, nn.Module), \
                 "All models must inherit torch Module class"
-            cls.model_name_mapping[name] = task_cls
-            return task_cls
+            cls.model_name_mapping[name] = model_cls
+            return model_cls
 
         return wrap
 
@@ -78,18 +79,18 @@ class Registry:
                 ...
         """
 
-        def wrap(task_cls: Type[nn.Module]) -> Type[nn.Module]:
+        def wrap(model_cls: Type[nn.Module]) -> Type[nn.Module]:
             import torch.nn as nn
-            assert issubclass(task_cls, nn.Module), \
+            assert issubclass(model_cls, nn.Module), \
                 "All models must inherit torch Module class"
-            cls.task_model_name_mapping[name] = task_cls
-            return task_cls
+            cls.task_model_name_mapping[name] = model_cls
+            return model_cls
 
         return wrap
 
     @classmethod
     def register_collate_fn(cls, name: str) -> Callable[[Type[Callable]], Type[Callable]]:
-        r"""Register a task model to registry with key 'name'
+        r"""Register a collate_fn to registry with key 'name'
 
         Args:
             name: Key with which the collate_fn will be registered.
@@ -103,12 +104,37 @@ class Registry:
                 ...
         """
 
-        def wrap(task_cls: Type[Callable]) -> Type[Callable]:
+        def wrap(fn_cls: Type[Callable]) -> Type[Callable]:
             from tape_pytorch.datasets import PaddedBatch
-            assert issubclass(task_cls, PaddedBatch), \
+            assert issubclass(fn_cls, PaddedBatch), \
                 "All collate_fn must inherit tape_pytorch.datasets.PaddedBatch"
-            cls.collate_fn_name_mapping[name] = task_cls
-            return task_cls
+            cls.collate_fn_name_mapping[name] = fn_cls
+            return fn_cls
+
+        return wrap
+
+    @classmethod
+    def register_tokenizer(cls, name: str) -> Callable[[Type], Type]:
+        r"""Register a tokenizer to registry with key 'name'
+
+        Args:
+            name: Key with which the tokenizer will be registered.
+
+        Usage::
+            from tape_pytorch.registry import registry
+            from tape_pytorch.tokenizers import TAPETokenizer
+
+            @registry.register('bpe')
+            class BPETokenizer(TAPETokenizer):
+                ...
+        """
+
+        def wrap(tokenizer_cls: Type[Callable]) -> Type[Callable]:
+            from tape_pytorch.tokenizers import TAPETokenizer
+            assert issubclass(tokenizer_cls, TAPETokenizer), \
+                "All collate_fn must inherit tape_pytorch.tokenizers.TAPETokenizer"
+            cls.tokenizer_name_mapping[name] = tokenizer_cls
+            return tokenizer_cls
 
         return wrap
 
@@ -127,6 +153,10 @@ class Registry:
     @classmethod
     def get_collate_fn_class(cls, name: str) -> Type[Callable]:
         return cls.collate_fn_name_mapping[name]
+
+    @classmethod
+    def get_tokenizer_class(cls, name: str) -> Type:
+        return cls.tokenizer_name_mapping[name]
 
 
 registry = Registry()

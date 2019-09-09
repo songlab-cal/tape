@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod, abstractproperty
 import logging
 
 import sentencepiece as spm
+from tape_pytorch.registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,7 @@ class TAPETokenizer(ABC):
         return cls
 
 
+@registry.register_tokenizer('dummy')
 class DummyTokenizer(TAPETokenizer):
     r"""
     Constructs a DummyTokenizer
@@ -131,9 +133,10 @@ class DummyTokenizer(TAPETokenizer):
         return cls
 
 
-class PfamTokenizer(TAPETokenizer):
+@registry.register_tokenizer('bpe')
+class BPETokenizer(TAPETokenizer):
     r"""
-    Constructs a PfamTokenizer.
+    Constructs a BPETokenizer.
 
     Args:
         corpus_file (Union[str, Path], optional): Path to a full corpus file for Pfam. Must provide this or model_file.
@@ -243,14 +246,3 @@ class PfamTokenizer(TAPETokenizer):
         if model_file is None:
             raise ValueError("Must specify pretrained model file")
         return cls(model_file=model_file, **kwargs)
-
-
-def get(tokenizer_type: str, model_file: Optional[Union[str, Path]] = None) -> TAPETokenizer:
-    if tokenizer_type == 'dummy':
-        return DummyTokenizer()
-    elif tokenizer_type == 'pfam':
-        if model_file is None:
-            raise ValueError("Must provide a pretrained model file when creating a PfamTokenizer")
-        return PfamTokenizer(model_file=model_file)
-    else:
-        raise ValueError(f"Unrecognized tokenizer: {tokenizer_type}")
