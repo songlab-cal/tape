@@ -140,7 +140,7 @@ class TaskRunner(object):
         bert_config = BertConfig.from_json_file(args.config_file)
 
         model = self._setup_model(
-            args.from_pretrained, args.bert_model, bert_config)  # , args.local_rank, n_gpu, args.fp16)
+            args.from_pretrained, args.bert_model, args.task, bert_config)  # , args.local_rank, n_gpu, args.fp16)
 
         optimizer = self._setup_optimizer(
             model, args.from_pretrained, args.fp16,
@@ -224,12 +224,15 @@ class TaskRunner(object):
     def _setup_model(self,
                      from_pretrained: bool,
                      bert_model: str,
+                     task: str,
                      config: BertConfig):
 
         if from_pretrained:
+            raise NotImplementedError
             model = BertForMaskedLM.from_pretrained(bert_model, config)
         else:
-            model = BertForMaskedLM(config)
+            base_model = registry.get_model_class('transformer')(config)
+            model = registry.get_task_model_class(task)(base_model, config)
 
         model.cuda()
 
@@ -384,9 +387,7 @@ class TaskRunner(object):
         for step, batch in enumerate(train_loader):
             self._iter_id += 1
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
-            input_ids, input_mask, lm_label_ids, clan, family = batch
-            outputs = self.model(
-                input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
+            outputs = self.model(*batch)
             loss = outputs[0]
 
             if self.n_gpu > 1:
@@ -407,7 +408,7 @@ class TaskRunner(object):
 
             viz.line_plot(self._iter_id, loss.item(), "loss", "train")
 
-            num_train_examples += input_ids.size(0)
+            num_train_examples += batch[0].size(0)
             num_train_steps += 1
 
             if (step + 1) % self.gradient_accumulation_steps == 0:
@@ -447,9 +448,7 @@ class TaskRunner(object):
         start_t = timer()
         for step, batch in enumerate(valid_loader):
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
-            input_ids, input_mask, lm_label_ids, clan, family = batch
-            outputs = self.model(
-                input_ids, attention_mask=input_mask, masked_lm_labels=lm_label_ids)
+            outputs = self.model(*batch)
             loss = outputs[0]
 
             if self.n_gpu > 1:

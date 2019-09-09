@@ -186,9 +186,9 @@ class PfamBatch(PaddedBatch):
     def __call__(self, batch):
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
-        input_ids = self._pad(input_ids, 0)  # pad input_ids with zeros
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
-        lm_label_ids = self._pad(lm_label_ids, -1)  # pad lm_label_ids with minus ones
+        input_ids = self._pad(input_ids, 0)  # pad index is zeros
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros as well
+        lm_label_ids = self._pad(lm_label_ids, -1)  # ignore_index is -1
         clan = torch.LongTensor(clan)
         family = torch.LongTensor(family)
 
@@ -219,7 +219,14 @@ class FluorescenceDataset(TAPEDataset):
 
 @registry.register_collate_fn('fluorescence')
 class FluorescenceBatch(PaddedBatch):
-    pass
+
+    def __call__(self, batch):
+        input_ids, input_mask, fluorescence_target = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        fluorescence_target = torch.FloatTensor(fluorescence_target)
+
+        return input_ids, input_mask, fluorescence_target
 
 
 @registry.register_dataset('stability')

@@ -9,8 +9,8 @@ class Registry:
     central repository for TAPE."""
 
     dataset_name_mapping: Dict[str, Type[Dataset]] = {}
-    model_name_mapping: Dict[str, Type[nn.Module]] = {}
-    task_model_name_mapping: Dict[str, Type[nn.Module]] = {}
+    model_name_mapping: Dict[str, Type] = {}
+    task_model_name_mapping: Dict[str, Type] = {}
     collate_fn_name_mapping: Dict[str, Type[Callable]] = {}
     tokenizer_name_mapping: Dict[str, Type] = {}
 
@@ -143,11 +143,11 @@ class Registry:
         return cls.dataset_name_mapping[name]
 
     @classmethod
-    def get_model_class(cls, name: str) -> Type[nn.Module]:
+    def get_model_class(cls, name: str) -> Type:
         return cls.model_name_mapping[name]
 
     @classmethod
-    def get_task_model_class(cls, name: str) -> Type[nn.Module]:
+    def get_task_model_class(cls, name: str) -> Type:
         return cls.task_model_name_mapping[name]
 
     @classmethod
