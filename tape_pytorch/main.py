@@ -34,6 +34,24 @@ from datasets import PfamDataset, PfamBatch
 logger = logging.getLogger(__name__)
 
 
+class MetricsAccumulator:
+
+    def __init__(self, smoothing: float = 0.95):
+        self._currloss: Optional[float] = None
+        self._smoothing = smoothing
+
+    def update(self, loss: float):
+        if self._currloss is None:
+            self._currloss = loss
+        else:
+            self._currloss = (1 - self._smoothing) * self._currloss + (self._smoothing) * loss
+
+    def loss(self) -> float:
+        if self._currloss is None:
+            raise RuntimeError("Trying to get the loss without any updates")
+        return self._currloss
+
+
 class TBLogger:
 
     def __init__(self, log_dir: Union[str, Path], exp_name: str, local_rank: int):
@@ -348,10 +366,10 @@ class TaskRunner(object):
                          train_loader: DataLoader,
                          scheduler: WarmupLinearSchedule,
                          viz: TBLogger):
-        train_loss = 0
         num_train_examples = 0
         num_train_steps = 0
-        loss_tmp = 0.
+        num_log_iter = 20
+        metrics = MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
 
         torch.set_grad_enabled(True)
         self.model.train()
@@ -367,12 +385,13 @@ class TaskRunner(object):
 
             if self.n_gpu > 1:
                 loss = loss.mean()  # mean() to average on multi-gpu
-            if self.gradient_accumulation_steps > 1:
-                loss = loss / self.gradient_accumulation_steps
+
+            metrics.update(loss.item())
+            loss /= self.gradient_accumulation_steps
+
             if self.fp16:
                 with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                     scaled_loss.backward()
-                # self.optimizer.backward(loss)
             else:
                 loss.backward()
 
@@ -380,11 +399,7 @@ class TaskRunner(object):
                 import pdb
                 pdb.set_trace()
 
-            train_loss += loss.item()
-
             viz.line_plot(self._iter_id, loss.item(), "loss", "train")
-
-            loss_tmp += loss.item()
 
             num_train_examples += input_ids.size(0)
             num_train_steps += 1
@@ -397,10 +412,9 @@ class TaskRunner(object):
                 self.optimizer.zero_grad()
                 self._global_step += 1
 
-            if (step + 1) % 20 == 0:
-                loss_tmp = loss_tmp / 20.0
+            if (step + 1) % num_log_iter == 0:
                 end_t = timer()
-                time_stamp = strftime("%a %d %b %y %X", gmtime())
+                time_stamp = strftime("%y-%m-%d %X", gmtime())
 
                 ep = epoch_id + num_train_steps / float(len(train_loader))
                 print_str = [
@@ -408,12 +422,11 @@ class TaskRunner(object):
                     f"[Ep: {ep:.2f}]",
                     f"[Iter: {num_train_steps}]",
                     f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {loss_tmp:.5g}]",
+                    f"[Loss: {metrics.loss():.5g}]",
                     f"[LR: {scheduler.get_lr()[0]:.5g}]"]
                 start_t = end_t
 
                 logger.info(''.join(print_str))
-                loss_tmp = 0
 
     def _run_valid_epoch(self,
                          epoch_id: int,
