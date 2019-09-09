@@ -394,6 +394,7 @@ class TaskRunner(object):
                 loss = loss.mean()  # mean() to average on multi-gpu
 
             metrics.update(loss.item())
+            viz.line_plot(self._iter_id, loss.item(), "loss", "train")
             loss /= self.gradient_accumulation_steps
 
             if self.fp16:
@@ -405,8 +406,6 @@ class TaskRunner(object):
             if math.isnan(loss.item()):
                 import pdb
                 pdb.set_trace()
-
-            viz.line_plot(self._iter_id, loss.item(), "loss", "train")
 
             num_train_examples += batch[0].size(0)
             num_train_steps += 1
