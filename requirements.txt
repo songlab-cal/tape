@@ -8,3 +8,5 @@ click
 tensorboardX
 sentencepiece
 scipy
+lmdb
+scipy
