@@ -7,27 +7,35 @@ from pytorch_transformers.modeling_bert import BertLayerNorm
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from torch.nn.utils.weight_norm import weight_norm
 
+from tape_pytorch.registry import registry
+
 
 TAPEConfig = BertConfig
 Transformer = BertModel
+registry.register_model('transformer')(Transformer)
 
 
+@registry.register_model('resnet')
 class ResNet(nn.Module):
     pass
 
 
+@registry.register_model('lstm')
 class LSTM(nn.Module):
     pass
 
 
+@registry.register_model('unirep')
 class UniRep(nn.Module):
     pass
 
 
+@registry.register_model('bepler')
 class Bepler(nn.Module):
     pass
 
 
+@registry.register_task_model('pfam')
 class MaskedLMModel(PreTrainedModel):
 
     def __init__(self, base_model, config):
@@ -78,6 +86,8 @@ class MaskedLMModel(PreTrainedModel):
         return outputs  # (masked_lm_loss), prediction_scores, (hidden_states), (attentions)
 
 
+@registry.register_task_model('fluorescence')
+@registry.register_task_model('stability')
 class FloatPredictModel(nn.Module):
 
     def __init__(self, base_model, config):
@@ -105,6 +115,7 @@ class FloatPredictModel(nn.Module):
         return outputs  # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
 
 
+@registry.register_task_model('remote_homology')
 class SequenceClassificationModel(nn.Module):
 
     def __init__(self, base_model, config, num_classes: int):
@@ -132,6 +143,7 @@ class SequenceClassificationModel(nn.Module):
         return outputs  # (class_prediction_loss), class_scores, (hidden_states), (attentions)
 
 
+@registry.register_task_model('secondary_structure')
 class SequenceToSequenceClassificationModel(nn.Module):
 
     def __init__(self, base_model, config, num_classes: int):

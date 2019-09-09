@@ -13,10 +13,12 @@ from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
 import tape_pytorch.tokenizers as tokenizers
+from tape_pytorch.registry import registry
 
 logger = logging.getLogger(__name__)
 
 
+@registry.register_dataset('lmdb')
 class LMDBDataset(Dataset):
     """Creates the Pfam Dataset
     Args:
@@ -81,6 +83,7 @@ class PaddedBatch(ABC):
         return torch.from_numpy(array)
 
 
+@registry.register_dataset('tape')
 class TAPEDataset(LMDBDataset):
 
     def __init__(self,
@@ -113,6 +116,7 @@ class TAPEDataset(LMDBDataset):
         return item, tokens, attention_mask
 
 
+@registry.register_dataset('pfam')
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
@@ -175,6 +179,7 @@ class PfamDataset(TAPEDataset):
         return masked_tokens, labels
 
 
+@registry.register_collate_fn('pfam')
 class PfamBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -189,6 +194,7 @@ class PfamBatch(PaddedBatch):
         return input_ids, input_mask, lm_label_ids, clan, family
 
 
+@registry.register_dataset('fluorescence')
 class FluorescenceDataset(TAPEDataset):
 
     def __init__(self,
@@ -210,10 +216,12 @@ class FluorescenceDataset(TAPEDataset):
         return token_ids, attention_mask, float(item['log_fluorescence'][0])
 
 
+@registry.register_collate_fn('fluorescence')
 class FluorescenceBatch(PaddedBatch):
     pass
 
 
+@registry.register_dataset('stability')
 class StabilityDataset(TAPEDataset):
 
     def __init__(self,
@@ -235,10 +243,12 @@ class StabilityDataset(TAPEDataset):
         return token_ids, attention_mask, float(item['stability_score'][0])
 
 
+@registry.register_collate_fn('stability')
 class StabilityBatch(PaddedBatch):
     pass
 
 
+@registry.register_dataset('remote_homology')
 class RemoteHomologyDataset(TAPEDataset):
 
     def __init__(self,
@@ -262,10 +272,12 @@ class RemoteHomologyDataset(TAPEDataset):
         return token_ids, attention_mask, item['fold_label']
 
 
+@registry.register_collate_fn('remote_homology')
 class RemoteHomologyBatch(PaddedBatch):
     pass
 
 
+@registry.register_dataset('proteinnet')
 class ProteinnetDataset(TAPEDataset):
 
     def __init__(self,
@@ -291,10 +303,12 @@ class ProteinnetDataset(TAPEDataset):
         return token_ids, attention_mask, contact_map, valid_mask
 
 
+@registry.register_collate_fn('proteinnet')
 class ProteinnetBatch(PaddedBatch):
     pass
 
 
+@registry.register_dataset('secondary_structure')
 class SecondaryStructureDataset(TAPEDataset):
 
     def __init__(self,
@@ -320,5 +334,6 @@ class SecondaryStructureDataset(TAPEDataset):
         return token_ids, attention_mask, item[f'ss{self._num_classes}']
 
 
+@registry.register_collate_fn('secondary_structure')
 class SecondaryStructureBatch(PaddedBatch):
     pass
