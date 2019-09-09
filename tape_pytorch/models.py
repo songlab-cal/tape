@@ -66,10 +66,9 @@ class MaskedLMModel(PreTrainedModel):
         self._tie_or_clone_weights(self.cls.predictions.decoder,
                                    self.bert.embeddings.word_embeddings)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, masked_lm_labels=None,
-                position_ids=None, head_mask=None):
-        outputs = self.bert(input_ids, position_ids=position_ids, token_type_ids=token_type_ids,
-                            attention_mask=attention_mask, head_mask=head_mask)
+    def forward(self, input_ids, attention_mask=None, masked_lm_labels=None, clan_labels=None, family_labels=None):
+        outputs = self.bert(input_ids, position_ids=None, token_type_ids=None,
+                            attention_mask=attention_mask, head_mask=None)
 
         sequence_output = outputs[0]
         prediction_scores = self.cls(sequence_output)
@@ -97,9 +96,7 @@ class FloatPredictModel(nn.Module):
 
     def forward(self,
                 input_ids,
-                token_type_ids=None,
                 attention_mask=None,
-                position_ids=None,
                 label=None):
         outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
             input_ids, attention_mask=attention_mask)
@@ -125,9 +122,7 @@ class SequenceClassificationModel(nn.Module):
 
     def forward(self,
                 input_ids,
-                token_type_ids=None,
                 attention_mask=None,
-                position_ids=None,
                 label=None):
         outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
             input_ids, attention_mask=attention_mask)
@@ -153,9 +148,7 @@ class SequenceToSequenceClassificationModel(nn.Module):
 
     def forward(self,
                 input_ids,
-                token_type_ids=None,
                 attention_mask=None,
-                position_ids=None,
                 label=None):
         outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
             input_ids, attention_mask=attention_mask)
