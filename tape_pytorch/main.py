@@ -44,7 +44,7 @@ class MetricsAccumulator:
         if self._currloss is None:
             self._currloss = loss
         else:
-            self._currloss = (1 - self._smoothing) * self._currloss + (self._smoothing) * loss
+            self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
 
     def loss(self) -> float:
         if self._currloss is None:
