@@ -27,8 +27,9 @@ try:
 except ImportError:
     APEX_FOUND = False
 
-from tokenizers import PfamTokenizer
-from datasets import PfamDataset, PfamBatch
+# from tokenizers import PfamTokenizer
+# from datasets import PfamDataset, PfamBatch
+from tape_pytorch.registry import registry
 
 
 logger = logging.getLogger(__name__)
@@ -69,6 +70,7 @@ class TBLogger:
 
 @dataclass(frozen=False)
 class TaskConfig:
+    task: str
     data_dir: str = 'data'
     vocab_file: str = 'data/pfam.model'
     pretrained_weight: Optional[str] = None
@@ -91,6 +93,7 @@ class TaskConfig:
     exp_name: Optional[str] = None
     local_rank: int = -1
     bert_model: str = ''
+    tokenizer: str = 'bpe'
 
 
 class TaskRunner(object):
@@ -132,7 +135,7 @@ class TaskRunner(object):
 
         self._set_random_seeds(args.seed, n_gpu)
 
-        tokenizer = PfamTokenizer.from_pretrained(args.vocab_file)
+        tokenizer = registry.get_tokenizer_class(args.tokenizer).from_pretrained(args.vocab_file)
 
         bert_config = BertConfig.from_json_file(args.config_file)
 
@@ -170,6 +173,7 @@ class TaskRunner(object):
         self.max_grad_norm = 1.0
 
         # Store args
+        self.task = args.task
         self.data_dir = args.data_dir
         self.vocab_file = args.vocab_file
         self.pretrained_weight = args.pretrained_weight
@@ -315,17 +319,19 @@ class TaskRunner(object):
 
     def train(self):
         viz = TBLogger(self.log_dir, self.exp_name, self.local_rank)
+        dataset_class = registry.get_dataset_class(self.task)
+        collate_fn_cls = registry.get_collate_fn_class(self.task)
 
-        train_dataset = PfamDataset(self.data_dir, 'train', self.tokenizer)
-        valid_dataset = PfamDataset(self.data_dir, 'valid', self.tokenizer)
+        train_dataset = dataset_class(self.data_dir, 'train', self.tokenizer)
+        valid_dataset = dataset_class(self.data_dir, 'valid', self.tokenizer)
         sampler_type = (DistributedSampler if self.local_rank != -1 else RandomSampler)
 
         train_loader = DataLoader(
             train_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=PfamBatch(), sampler=sampler_type(train_dataset))
+            collate_fn=collate_fn_cls(), sampler=sampler_type(train_dataset))
         valid_loader = DataLoader(
             valid_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=PfamBatch(), sampler=sampler_type(valid_dataset))
+            collate_fn=collate_fn_cls(), sampler=sampler_type(valid_dataset))
 
         num_train_optimization_steps = len(train_dataset)
         num_train_optimization_steps /= self.train_batch_size
@@ -466,6 +472,7 @@ class TaskRunner(object):
 
 
 @click.command()
+@click.argument('task', type=str)
 @click.option('--data-dir', default='data', type=click.Path(exists=True, file_okay=False))
 @click.option('--vocab-file', default='data/pfam.model', type=click.Path(exists=True, dir_okay=False))
 @click.option('--pretrained-weight', default=None, type=click.Path(exists=True, dir_okay=False))
@@ -486,7 +493,9 @@ class TaskRunner(object):
 @click.option('--exp-name', default=None, type=str)
 @click.option('--local_rank', default=-1, type=int)
 @click.option('--bert-model', default=str, type=str)
-def main(data_dir: str = 'data',
+@click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
+def main(task: str,
+         data_dir: str = 'data',
          vocab_file: str = 'data/pfam.model',
          pretrained_weight: Optional[str] = None,
          log_dir: str = 'logs',
@@ -507,15 +516,17 @@ def main(data_dir: str = 'data',
          from_pretrained: bool = False,
          exp_name: Optional[str] = None,
          local_rank: int = -1,
-         bert_model: str = ''):
+         bert_model: str = '',
+         tokenizer: str = 'bpe'):
 
     config = TaskConfig(
+        task,
         data_dir, vocab_file, pretrained_weight, log_dir,
         output_dir, config_file, train_batch_size, learning_rate,
         num_train_epochs, warmup_steps, cuda,
         on_memory, seed, gradient_accumulation_steps,
         fp16, loss_scale, num_workers, from_pretrained,
-        exp_name, local_rank, bert_model)
+        exp_name, local_rank, bert_model, tokenizer)
 
     runner = TaskRunner(config)
     runner.train()
