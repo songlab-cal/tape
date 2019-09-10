@@ -73,7 +73,7 @@ class TAPETokenizer(ABC):
 
     @classmethod
     def from_pretrained(cls, **kwargs):
-        return cls
+        return cls()
 
 
 @registry.register_tokenizer('dummy')
@@ -130,7 +130,7 @@ class DummyTokenizer(TAPETokenizer):
 
     @classmethod
     def from_pretrained(cls, **kwargs):
-        return cls
+        return cls()
 
 
 @registry.register_tokenizer('bpe')
