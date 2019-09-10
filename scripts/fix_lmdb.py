@@ -4,7 +4,6 @@ import pickle as pkl
 from pathlib import Path
 from tape.data_utils import PFAM_VOCAB
 import numpy as np
-from itertools import dropwhile
 
 
 vocab = {v: k for k, v in PFAM_VOCAB.items()}

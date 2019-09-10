@@ -27,8 +27,6 @@ try:
 except ImportError:
     APEX_FOUND = False
 
-# from tokenizers import PfamTokenizer
-# from datasets import PfamDataset, PfamBatch
 from tape_pytorch.registry import registry
 
 
