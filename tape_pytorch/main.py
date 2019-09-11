@@ -134,12 +134,13 @@ class TaskRunner(object):
 
         self._set_random_seeds(args.seed, n_gpu)
 
-        tokenizer = registry.get_tokenizer_class(args.tokenizer).from_pretrained(args.vocab_file)
+        tokenizer = registry.get_tokenizer_class(
+            args.tokenizer).from_pretrained(args.vocab_file)
 
         bert_config = BertConfig.from_json_file(args.config_file)
 
         model = self._setup_model(
-            args.from_pretrained, args.bert_model, args.task, bert_config)  # , args.local_rank, n_gpu, args.fp16)
+            args.from_pretrained, args.bert_model, args.task, bert_config)
 
         optimizer = self._setup_optimizer(
             model, args.from_pretrained, args.fp16,
@@ -149,13 +150,15 @@ class TaskRunner(object):
         if args.fp16:
             if not APEX_FOUND:
                 raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+                    "Please install apex from https://www.github.com/nvidia/apex "
+                    "to use distributed and fp16 training.")
             model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
 
         if args.local_rank != -1:
             if not APEX_FOUND:
                 raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+                    "Please install apex from https://www.github.com/nvidia/apex "
+                    "to use distributed and fp16 training.")
             model = DDP(model)
         elif n_gpu > 1:
             model = nn.DataParallel(model)
@@ -263,7 +266,8 @@ class TaskRunner(object):
             ]
         else:
             assert pretrained_weight is not None
-            bert_weight_name = json.load(open("config/" + pretrained_weight + "_weight_name.json", "r"))
+            with open("config/" + pretrained_weight + "_weight_name.json", "r") as f:
+                bert_weight_name = json.load(f)
             optimizer_grouped_parameters = []
             for key, value in dict(model.named_parameters()).items():
                 if value.requires_grad:
@@ -345,7 +349,8 @@ class TaskRunner(object):
             num_train_optimization_steps //= torch.distributed.get_world_size()
 
         scheduler = WarmupLinearSchedule(
-            self.optimizer, warmup_steps=self.warmup_steps, t_total=num_train_optimization_steps)
+            self.optimizer, warmup_steps=self.warmup_steps,
+            t_total=num_train_optimization_steps)
 
         logger.info("***** Running training *****")
         logger.info("  Num examples = %d", len(train_dataset))
@@ -471,11 +476,13 @@ class TaskRunner(object):
 @click.command()
 @click.argument('task', type=str)
 @click.option('--data-dir', default='data', type=click.Path(exists=True, file_okay=False))
-@click.option('--vocab-file', default='data/pfam.model', type=click.Path(exists=True, dir_okay=False))
+@click.option('--vocab-file', default='data/pfam.model',
+              type=click.Path(exists=True, dir_okay=False))
 @click.option('--pretrained-weight', default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option('--log-dir', default='logs', type=click.Path())
 @click.option('--output-dir', default='results', type=click.Path())
-@click.option('--config-file', default='config/bert_config.json', type=click.Path(exists=True, dir_okay=False))
+@click.option('--config-file', default='config/bert_config.json',
+              type=click.Path(exists=True, dir_okay=False))
 @click.option('--train-batch-size', default=4, type=int)
 @click.option('--learning-rate', default=1e-4, type=float)
 @click.option('--num-train-epochs', default=10, type=int)
