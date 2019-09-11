@@ -1,29 +1,26 @@
 import torch.nn as nn
-from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
+from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers.modeling_bert import BertConfig
 from pytorch_transformers.modeling_bert import BertModel
 
 from tape_pytorch.registry import registry
-import torchvision.models
 
 
-TAPEConfig = BertConfig
+TransformerConfig = BertConfig
 Transformer = BertModel
 registry.register_model('transformer')(Transformer)
 
 
-
-
 @registry.register_model('lstm')
-class LSTM(nn.Module):
+class LSTM(PreTrainedModel):
     pass
 
 
 @registry.register_model('unirep')
-class UniRep(nn.Module):
+class UniRep(PreTrainedModel):
     pass
 
 
 @registry.register_model('bepler')
-class Bepler(nn.Module):
+class Bepler(PreTrainedModel):
     pass

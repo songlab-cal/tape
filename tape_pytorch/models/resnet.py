@@ -310,6 +310,7 @@ class ResNetEncoder(nn.Module):
 
 @registry.register_model('resnet')
 class ResNet(PreTrainedModel):
+    config_class = ResNetConfig
 
     def __init__(self, config):
         super().__init__(config)
