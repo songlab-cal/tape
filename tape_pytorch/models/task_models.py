@@ -61,10 +61,10 @@ class MaskedLMModel(PreTrainedModel):
 
 @registry.register_task_model('fluorescence')
 @registry.register_task_model('stability')
-class FloatPredictModel(nn.Module):
+class FloatPredictModel(PreTrainedModel):
 
     def __init__(self, base_model, config):
-        super().__init__()
+        super().__init__(config)
         self.base_model = base_model
         self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, 1, 0.5)
 

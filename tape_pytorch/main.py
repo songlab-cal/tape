@@ -9,6 +9,8 @@ from pathlib import Path
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import islice
+from tqdm import tqdm
 
 import click
 import numpy as np
@@ -78,7 +80,6 @@ class TaskConfig:
     pretrained_weight: Optional[str] = None
     log_dir: str = 'logs'
     output_dir: str = 'results'
-    # max_seq_length: Optional[int] = None
     train_batch_size: int = 4
     learning_rate: float = 1e-4
     num_train_epochs: int = 10
@@ -94,6 +95,7 @@ class TaskConfig:
     exp_name: Optional[str] = None
     local_rank: int = -1
     tokenizer: str = 'bpe'
+    debug: bool = False
 
 
 class TaskRunner(object):
@@ -183,7 +185,7 @@ class TaskRunner(object):
         self.config_file = args.config_file
         self.train_batch_size = args.train_batch_size
         self.learning_rate = args.learning_rate
-        self.num_train_epochs = args.num_train_epochs
+        self.num_train_epochs = args.num_train_epochs if not args.debug else 1
         self.warmup_steps = args.warmup_steps
         self.cuda = args.cuda
         self.on_memory = args.on_memory
@@ -194,6 +196,7 @@ class TaskRunner(object):
         self.num_workers = args.num_workers
         self.from_pretrained = args.from_pretrained
         self.local_rank = args.local_rank
+        self.debug = args.debug
 
     def _path_to_datetime(self, path: Path) -> datetime:
         name = path.name
@@ -374,7 +377,10 @@ class TaskRunner(object):
             if self.local_rank in (-1, 0):
                 # Only save the model itself
                 output_model_dir = self.save_path / f"pytorch_model_{epoch_id}"
-                self.model.save_pretrained(output_model_dir)
+                output_model_dir.mkdir()
+                model_to_save = getattr(self.model, 'module', self.model)
+                model_to_save.save_pretrained(output_model_dir)
+                logger.info(f"Saving model checkpoint to {output_model_dir}")
 
     def _run_train_epoch(self,
                          epoch_id: int,
@@ -390,6 +396,10 @@ class TaskRunner(object):
         self.model.train()
 
         start_t = timer()
+
+        if self.debug:
+            train_loader = islice(train_loader, 10)  # type: ignore
+
         for step, batch in enumerate(train_loader):
             self._iter_id += 1
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
@@ -450,8 +460,10 @@ class TaskRunner(object):
         torch.set_grad_enabled(False)
         self.model.eval()
 
-        start_t = timer()
-        for step, batch in enumerate(valid_loader):
+        if self.debug:
+            valid_loader = islice(valid_loader, 10)  # type: ignore
+
+        for step, batch in tqdm(enumerate(valid_loader), desc='Evaluating split val'):
             batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
             outputs = self.model(*batch)
             loss = outputs[0]
@@ -461,15 +473,9 @@ class TaskRunner(object):
 
             eval_loss += loss.item()
 
-            end_t = timer()
-            progress_string = f"\r Evaluating split val [{step + 1}/{num_batches}\t " \
-                              f"Time: {end_t - start_t:5.2f}s]"
-
-            logger.info(progress_string)
-
         eval_loss /= num_batches
 
-        print_str = "Evaluation: [Loss: {eval_loss:.5g}]"
+        print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
 
         logger.info(print_str)
         viz.line_plot(epoch_id, eval_loss, "loss", "val")
@@ -501,6 +507,7 @@ class TaskRunner(object):
 @click.option('--exp-name', default=None, type=str)
 @click.option('--local_rank', default=-1, type=int)
 @click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
+@click.option('--debug/--no-debug', default=False)
 def main(task: str,
          model_type: str,
          config_file: Optional[str] = None,
@@ -523,7 +530,8 @@ def main(task: str,
          from_pretrained: bool = False,
          exp_name: Optional[str] = None,
          local_rank: int = -1,
-         tokenizer: str = 'bpe'):
+         tokenizer: str = 'bpe',
+         debug: bool = False):
 
     config = TaskConfig(
         task, model_type, config_file,
@@ -532,7 +540,7 @@ def main(task: str,
         num_train_epochs, warmup_steps, cuda,
         on_memory, seed, gradient_accumulation_steps,
         fp16, loss_scale, num_workers, from_pretrained,
-        exp_name, local_rank, tokenizer)
+        exp_name, local_rank, tokenizer, debug)
 
     runner = TaskRunner(config)
     runner.train()
