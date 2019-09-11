@@ -16,8 +16,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
-from pytorch_transformers import (BertConfig, BertForMaskedLM, BertForPreTraining,
-                                  AdamW, WarmupLinearSchedule)
+from pytorch_transformers.modeling_utils import PreTrainedModel
+from pytorch_transformers import AdamW
+from pytorch_transformers import WarmupLinearSchedule
 from tensorboardX import SummaryWriter
 
 try:
@@ -70,12 +71,13 @@ class TBLogger:
 @dataclass(frozen=False)
 class TaskConfig:
     task: str
+    model_type: str
+    config_file: str
     data_dir: str = 'data'
     vocab_file: str = 'data/pfam.model'
     pretrained_weight: Optional[str] = None
     log_dir: str = 'logs'
     output_dir: str = 'results'
-    config_file: str = 'config/bert_config.json'
     # max_seq_length: Optional[int] = None
     train_batch_size: int = 4
     learning_rate: float = 1e-4
@@ -91,7 +93,6 @@ class TaskConfig:
     from_pretrained: bool = False
     exp_name: Optional[str] = None
     local_rank: int = -1
-    bert_model: str = ''
     tokenizer: str = 'bpe'
 
 
@@ -137,10 +138,8 @@ class TaskRunner(object):
         tokenizer = registry.get_tokenizer_class(
             args.tokenizer).from_pretrained(args.vocab_file)
 
-        bert_config = BertConfig.from_json_file(args.config_file)
-
         model = self._setup_model(
-            args.from_pretrained, args.bert_model, args.task, bert_config)
+            args.from_pretrained, args.model_type, args.task, args.config_file)
 
         optimizer = self._setup_optimizer(
             model, args.from_pretrained, args.fp16,
@@ -195,7 +194,6 @@ class TaskRunner(object):
         self.num_workers = args.num_workers
         self.from_pretrained = args.from_pretrained
         self.local_rank = args.local_rank
-        self.bert_model = args.bert_model
 
     def _path_to_datetime(self, path: Path) -> datetime:
         name = path.name
@@ -225,15 +223,16 @@ class TaskRunner(object):
 
     def _setup_model(self,
                      from_pretrained: bool,
-                     bert_model: str,
+                     model_type: str,
                      task: str,
-                     config: BertConfig):
+                     config_file: str):
 
         if from_pretrained:
             raise NotImplementedError
-            model = BertForMaskedLM.from_pretrained(bert_model, config)
         else:
-            base_model = registry.get_model_class('transformer')(config)
+            model_cls = registry.get_model_class(model_type)
+            config = model_cls.config_class.from_json_file(config_file)
+            base_model = registry.get_model_class(model_type)(config)
             model = registry.get_task_model_class(task)(base_model, config)
 
         model.cuda()
@@ -241,7 +240,7 @@ class TaskRunner(object):
         return model
 
     def _setup_optimizer(self,
-                         model: BertForPreTraining,
+                         model: PreTrainedModel,
                          from_pretrained: bool,
                          fp16: bool,
                          learning_rate: float,
@@ -474,15 +473,17 @@ class TaskRunner(object):
 
 
 @click.command()
-@click.argument('task', type=str)
+@click.argument('task', type=click.Choice(registry.dataset_name_mapping.keys()))
+@click.argument('model_type',
+                type=click.Choice(registry.model_name_mapping.keys()))
+@click.argument('config-file',
+                type=click.Path(exists=True, dir_okay=False))
 @click.option('--data-dir', default='data', type=click.Path(exists=True, file_okay=False))
 @click.option('--vocab-file', default='data/pfam.model',
               type=click.Path(exists=True, dir_okay=False))
 @click.option('--pretrained-weight', default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option('--log-dir', default='logs', type=click.Path())
 @click.option('--output-dir', default='results', type=click.Path())
-@click.option('--config-file', default='config/bert_config.json',
-              type=click.Path(exists=True, dir_okay=False))
 @click.option('--train-batch-size', default=4, type=int)
 @click.option('--learning-rate', default=1e-4, type=float)
 @click.option('--num-train-epochs', default=10, type=int)
@@ -496,16 +497,15 @@ class TaskRunner(object):
 @click.option('--from-pretrained', is_flag=True)
 @click.option('--exp-name', default=None, type=str)
 @click.option('--local_rank', default=-1, type=int)
-@click.option('--bert-model', default=str, type=str)
 @click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
 def main(task: str,
+         model_type: str,
+         config_file: str,
          data_dir: str = 'data',
          vocab_file: str = 'data/pfam.model',
          pretrained_weight: Optional[str] = None,
          log_dir: str = 'logs',
          output_dir: str = 'results',
-         config_file: str = 'config/bert_config.json',
-         # max_seq_length: Optional[int] = None,
          train_batch_size: int = 4,
          learning_rate: float = 1e-4,
          num_train_epochs: int = 10,
@@ -520,17 +520,16 @@ def main(task: str,
          from_pretrained: bool = False,
          exp_name: Optional[str] = None,
          local_rank: int = -1,
-         bert_model: str = '',
          tokenizer: str = 'bpe'):
 
     config = TaskConfig(
-        task,
+        task, model_type, config_file,
         data_dir, vocab_file, pretrained_weight, log_dir,
-        output_dir, config_file, train_batch_size, learning_rate,
+        output_dir, train_batch_size, learning_rate,
         num_train_epochs, warmup_steps, cuda,
         on_memory, seed, gradient_accumulation_steps,
         fp16, loss_scale, num_workers, from_pretrained,
-        exp_name, local_rank, bert_model, tokenizer)
+        exp_name, local_rank, tokenizer)
 
     runner = TaskRunner(config)
     runner.train()

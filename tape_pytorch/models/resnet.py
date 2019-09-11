@@ -292,7 +292,6 @@ class ResNetEncoder(nn.Module):
         return nn.ModuleList(layers)
 
     def forward(self, x, input_mask=None):
-        print(x.shape)
         x = self.conv1(x, input_mask)
         x = self.bn1(x)
         x = self.relu(x)

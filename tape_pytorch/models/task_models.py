@@ -72,18 +72,22 @@ class FloatPredictModel(nn.Module):
                 input_ids,
                 attention_mask=None,
                 label=None):
-        outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
+        # sequence_output, pooled_output, (hidden_states), (attention)
+        outputs = self.base_model(
             input_ids, attention_mask=attention_mask)
         pooled_output = outputs[1]
         float_prediction = self.predict(pooled_output)
 
-        outputs = (float_prediction,) + outputs[2:]  # Add hidden states and attention if they are here
+        # Add hidden states and attention if they are here
+        outputs = (float_prediction,) + outputs[2:]
 
         if label is not None:
+            label = label.reshape_as(float_prediction)
             loss = F.mse_loss(float_prediction, label)
             outputs = (loss,) + outputs
 
-        return outputs  # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
+        # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
+        return outputs
 
 
 @registry.register_task_model('remote_homology')

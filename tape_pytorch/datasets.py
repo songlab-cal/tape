@@ -18,7 +18,6 @@ from tape_pytorch.registry import registry
 logger = logging.getLogger(__name__)
 
 
-@registry.register_dataset('lmdb')
 class LMDBDataset(Dataset):
     """Creates the Pfam Dataset
     Args:
@@ -83,7 +82,6 @@ class PaddedBatch(ABC):
         return torch.from_numpy(array)
 
 
-@registry.register_dataset('tape')
 class TAPEDataset(LMDBDataset):
 
     def __init__(self,
