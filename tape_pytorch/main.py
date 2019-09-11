@@ -72,7 +72,7 @@ class TBLogger:
 class TaskConfig:
     task: str
     model_type: str
-    config_file: str
+    config_file: Optional[str] = None
     data_dir: str = 'data'
     vocab_file: str = 'data/pfam.model'
     pretrained_weight: Optional[str] = None
@@ -225,13 +225,16 @@ class TaskRunner(object):
                      from_pretrained: bool,
                      model_type: str,
                      task: str,
-                     config_file: str):
+                     config_file: Optional[str]):
 
         if from_pretrained:
             raise NotImplementedError
         else:
             model_cls = registry.get_model_class(model_type)
-            config = model_cls.config_class.from_json_file(config_file)
+            if config_file is not None:
+                config = model_cls.config_class.from_json_file(config_file)
+            else:
+                config = model_cls.config_class()
             base_model = registry.get_model_class(model_type)(config)
             model = registry.get_task_model_class(task)(base_model, config)
 
@@ -476,8 +479,8 @@ class TaskRunner(object):
 @click.argument('task', type=click.Choice(registry.dataset_name_mapping.keys()))
 @click.argument('model_type',
                 type=click.Choice(registry.model_name_mapping.keys()))
-@click.argument('config-file',
-                type=click.Path(exists=True, dir_okay=False))
+@click.option('--config-file', default=None,
+              type=click.Path(exists=True, dir_okay=False))
 @click.option('--data-dir', default='data', type=click.Path(exists=True, file_okay=False))
 @click.option('--vocab-file', default='data/pfam.model',
               type=click.Path(exists=True, dir_okay=False))
@@ -500,7 +503,7 @@ class TaskRunner(object):
 @click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
 def main(task: str,
          model_type: str,
-         config_file: str,
+         config_file: Optional[str] = None,
          data_dir: str = 'data',
          vocab_file: str = 'data/pfam.model',
          pretrained_weight: Optional[str] = None,
