@@ -77,6 +77,7 @@ class TransformerConfig(PretrainedConfig):
 
 
 Transformer = BertModel
+Transformer.config_class = TransformerConfig
 registry.register_model('transformer')(Transformer)
 
 

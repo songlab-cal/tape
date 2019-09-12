@@ -1,26 +1,81 @@
+from typing import Optional
+import json
 import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_transformers.modeling_bert import BertOnlyMLMHead
 from pytorch_transformers.modeling_bert import BertLayerNorm
+from pytorch_transformers.modeling_utils import PretrainedConfig
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from torch.nn.utils.weight_norm import weight_norm
 
 from tape_pytorch.registry import registry
 
+from .base_models import Transformer, LSTM, Bepler, UniRep
+from .resnet import ResNet
 
-@registry.register_task_model('pfam')
-class MaskedLMModel(PreTrainedModel):
 
-    def __init__(self, base_model, config):
-        super().__init__(config)
+BASE_MODEL_CLASSES = {
+    'transformer': Transformer,
+    'resnet': ResNet,
+    'lstm': LSTM,
+    'unirep': UniRep,
+    'bepler': Bepler}
 
-        self.bert = base_model
-        self.cls = BertOnlyMLMHead(config)
 
-        self.init_weights()
-        self.tie_weights()
+class TAPEConfig(PretrainedConfig):
+    r"""
+        Arguments:
+            vocab_size_or_config_json_file: Vocabulary size of `inputs_ids` in `BertModel`.
+    """
+    # pretrained_config_archive_map = BERT_PRETRAINED_CONFIG_ARCHIVE_MAP
 
-    def _init_weights(self, module):
+    def __init__(self,
+                 other_config_or_json_file,
+                 base_model=None,
+                 num_classes: Optional[int] = None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        if isinstance(other_config_or_json_file, str):
+            with open(other_config_or_json_file, "r", encoding='utf-8') as reader:
+                json_config = json.loads(reader.read())
+            for key, value in json_config.items():
+                self.__dict__[key] = value
+        elif isinstance(other_config_or_json_file, dict):
+            for key, value in other_config_or_json_file.items():
+                self.__dict__[key] = value
+        elif isinstance(other_config_or_json_file, PretrainedConfig):
+            for key, value in other_config_or_json_file.to_dict().items():
+                self.__dict__[key] = value
+        else:
+            raise ValueError("First argument must be either a config file (PretrainedConfig)"
+                             "or the path to a pretrained model config file (str)")
+
+        if getattr(self, 'base_model', None) is None:
+            if base_model is None:
+                raise ValueError("Must pass a base model class")
+            self.base_model = base_model
+
+        if self.base_model not in BASE_MODEL_CLASSES:
+            raise ValueError(f"Unirecognized base model class {self.base_model}")
+
+        if getattr(self, 'num_classes', None) is None:
+            self.num_classes = num_classes
+        else:
+            assert self.num_classes == num_classes
+
+    @classmethod
+    def from_dict(cls, json_object):
+        """Constructs a `Config` from a Python dictionary of parameters."""
+        config = cls(json_object)
+        return config
+
+
+class TAPEPreTrainedModel(PreTrainedModel):
+
+    config_class = TAPEConfig
+    base_model_prefix = "base_model"
+
+    def init_weights(self, module):
         """ Initialize the weights """
         if isinstance(module, (nn.Linear, nn.Embedding)):
             # Slightly different from the TF version which uses
@@ -33,21 +88,40 @@ class MaskedLMModel(PreTrainedModel):
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
 
+
+@registry.register_task_model('pfam')
+class MaskedLMModel(TAPEPreTrainedModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
+        self.cls = BertOnlyMLMHead(config)
+
+        self.apply(self.init_weights)
+        self.tie_weights()
+
     def tie_weights(self):
         """ Make sure we are sharing the input and output embeddings.
             Export to TorchScript can't handle parameter sharing so we are cloning them instead.
         """
         self._tie_or_clone_weights(self.cls.predictions.decoder,
-                                   self.bert.embeddings.word_embeddings)
+                                   self.base_model.embeddings.word_embeddings)
 
-    def forward(self, input_ids, attention_mask=None, masked_lm_labels=None, clan_labels=None, family_labels=None):
-        outputs = self.bert(input_ids, position_ids=None, token_type_ids=None,
-                            attention_mask=attention_mask, head_mask=None)
+    def forward(self,
+                input_ids,
+                attention_mask=None,
+                masked_lm_labels=None,
+                clan_labels=None,
+                family_labels=None):
+
+        outputs = self.base_model(input_ids, position_ids=None, token_type_ids=None,
+                                  attention_mask=attention_mask, head_mask=None)
 
         sequence_output = outputs[0]
         prediction_scores = self.cls(sequence_output)
 
-        outputs = (prediction_scores,) + outputs[2:]  # Add hidden states and attention if they are here
+        # Add hidden states and attention if they are here
+        outputs = (prediction_scores,) + outputs[2:]
         if masked_lm_labels is not None:
             # loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = F.cross_entropy(
@@ -61,12 +135,14 @@ class MaskedLMModel(PreTrainedModel):
 
 @registry.register_task_model('fluorescence')
 @registry.register_task_model('stability')
-class FloatPredictModel(PreTrainedModel):
+class FloatPredictModel(TAPEPreTrainedModel):
 
-    def __init__(self, base_model, config):
+    def __init__(self, config):
         super().__init__(config)
-        self.base_model = base_model
+        self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, 1, 0.5)
+
+        self.apply(self.init_weights)
 
     def forward(self,
                 input_ids,
@@ -91,23 +167,29 @@ class FloatPredictModel(PreTrainedModel):
 
 
 @registry.register_task_model('remote_homology')
-class SequenceClassificationModel(nn.Module):
+class SequenceClassificationModel(TAPEPreTrainedModel):
 
-    def __init__(self, base_model, config, num_classes: int):
+    def __init__(self, base_model, config):
         super().__init__()
-        self.base_model = base_model
-        self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
+        self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
+        self.predict = SimpleMLP(
+            config.hidden_size, config.hidden_size * 2, config.num_classes, 0.5)
+
+        self.apply(self.init_weights)
 
     def forward(self,
                 input_ids,
                 attention_mask=None,
                 label=None):
-        outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
+
+        # sequence_output, pooled_output, (hidden_states), (attention)
+        outputs = self.base_model(
             input_ids, attention_mask=attention_mask)
         pooled_output = outputs[1]
         class_scores = self.predict(pooled_output)
 
-        outputs = (class_scores,) + outputs[2:]  # Add hidden states and attention if they are here
+        # Add hidden states and attention if they are here
+        outputs = (class_scores,) + outputs[2:]
 
         if label is not None:
             loss = F.cross_entropy(class_scores, label)
@@ -117,23 +199,28 @@ class SequenceClassificationModel(nn.Module):
 
 
 @registry.register_task_model('secondary_structure')
-class SequenceToSequenceClassificationModel(nn.Module):
+class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
-    def __init__(self, base_model, config, num_classes: int):
+    def __init__(self, config):
         super().__init__()
-        self.base_model = base_model
-        self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
+        self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
+        self.predict = SimpleMLP(
+            config.hidden_size, config.hidden_size * 2, config.num_classes, 0.5)
+
+        self.apply(self.init_weights)
 
     def forward(self,
                 input_ids,
                 attention_mask=None,
                 label=None):
-        outputs = self.base_model(  # sequence_output, pooled_output, (hidden_states), (attention)
+        # sequence_output, pooled_output, (hidden_states), (attention)
+        outputs = self.base_model(
             input_ids, attention_mask=attention_mask)
         sequence_output = outputs[0]
         sequence_class_scores = self.predict(sequence_output)
 
-        outputs = (sequence_class_scores,) + outputs[2:]  # Add hidden states and attention if they are here
+        # Add hidden states and attention if they are here
+        outputs = (sequence_class_scores,) + outputs[2:]
 
         if label is not None:
             loss = F.cross_entropy(
@@ -141,7 +228,8 @@ class SequenceToSequenceClassificationModel(nn.Module):
                 label.view(-1))
             outputs = (loss,) + outputs
 
-        return outputs  # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
+        # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
+        return outputs
 
 
 class SimpleMLP(nn.Module):

@@ -31,6 +31,7 @@ except ImportError:
     APEX_FOUND = False
 
 from tape_pytorch.registry import registry
+from tape_pytorch.models.task_models import TAPEConfig
 
 
 logger = logging.getLogger(__name__)
@@ -91,7 +92,7 @@ class TaskConfig:
     fp16: bool = False
     loss_scale: int = 0
     num_workers: int = 20
-    from_pretrained: bool = False
+    from_pretrained: Optional[str] = None
     exp_name: Optional[str] = None
     local_rank: int = -1
     tokenizer: str = 'bpe'
@@ -201,8 +202,7 @@ class TaskRunner(object):
     def _path_to_datetime(self, path: Path) -> datetime:
         name = path.name
         datetime_string = name.split('_')[0]
-        year, month, day, time_string = datetime_string.split('-')
-        hour, minute, second = time_string.split(':')
+        year, month, day, hour, minute, second = datetime_string.split('-')
         pathdatetime = datetime(
             int(year), int(month), int(day), int(hour), int(minute), int(second))
         return pathdatetime
@@ -225,21 +225,23 @@ class TaskRunner(object):
         root_logger.addHandler(file_handler)
 
     def _setup_model(self,
-                     from_pretrained: bool,
+                     from_pretrained: Optional[str],
                      model_type: str,
                      task: str,
                      config_file: Optional[str]):
 
-        if from_pretrained:
-            raise NotImplementedError
+        model_cls = registry.get_task_model_class(task)
+        if from_pretrained is not None:
+            assert config_file is None
+            load_dir = Path(from_pretrained)
+            model = model_cls.from_pretrained(load_dir)
         else:
-            model_cls = registry.get_model_class(model_type)
             if config_file is not None:
-                config = model_cls.config_class.from_json_file(config_file)
+                config = TAPEConfig.from_json_file(config_file)
             else:
-                config = model_cls.config_class()
-            base_model = registry.get_model_class(model_type)(config)
-            model = registry.get_task_model_class(task)(base_model, config)
+                base_config = registry.get_model_class(model_type).config_class()
+                config = TAPEConfig(base_config, base_model=model_type)
+            model = model_cls(config)
 
         model.cuda()
 
@@ -247,13 +249,13 @@ class TaskRunner(object):
 
     def _setup_optimizer(self,
                          model: PreTrainedModel,
-                         from_pretrained: bool,
+                         from_pretrained: Optional[str],
                          fp16: bool,
                          learning_rate: float,
                          pretrained_weight: Optional[str],
                          loss_scale: int):
         no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-        if not from_pretrained:
+        if from_pretrained is None:
             param_optimizer = list(model.named_parameters())
             optimizer_grouped_parameters = [
                 {
@@ -300,7 +302,7 @@ class TaskRunner(object):
 
     def _get_savepath(self, output_dir: str, exp_name: Optional[str]) -> Tuple[Path, str]:
         if exp_name is None:
-            time_stamp = strftime("%y-%m-%d-%H:%M:%S", gmtime())
+            time_stamp = strftime("%y-%m-%d-%H-%M-%S", gmtime())
             exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
 
         save_path = Path(output_dir) / exp_name
@@ -503,7 +505,8 @@ class TaskRunner(object):
 @click.option('--gradient-accumulation-steps', default=1, type=int)
 @click.option('--fp16/--no-fp16', default=False)
 @click.option('--loss-scale', default=0, type=int)
-@click.option('--from-pretrained', is_flag=True)
+@click.option('--from-pretrained', default=None,
+              type=click.Path(exists=True, file_okay=False))
 @click.option('--exp-name', default=None, type=str)
 @click.option('--local_rank', default=-1, type=int)
 @click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
@@ -527,7 +530,7 @@ def main(task: str,
          fp16: bool = False,
          loss_scale: int = 0,
          num_workers: int = 20,
-         from_pretrained: bool = False,
+         from_pretrained: Optional[str] = None,
          exp_name: Optional[str] = None,
          local_rank: int = -1,
          tokenizer: str = 'bpe',
