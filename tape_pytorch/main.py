@@ -146,8 +146,7 @@ class TaskRunner(object):
 
         optimizer = self._setup_optimizer(
             model, args.from_pretrained, args.fp16,
-            args.learning_rate, args.pretrained_weight,
-            args.loss_scale)
+            args.learning_rate, args.loss_scale)
 
         if args.fp16:
             if not APEX_FOUND:
@@ -186,7 +185,7 @@ class TaskRunner(object):
         self.config_file = args.config_file
         self.train_batch_size = args.train_batch_size
         self.learning_rate = args.learning_rate
-        self.num_train_epochs = args.num_train_epochs if not args.debug else 1
+        self.num_train_epochs = args.num_train_epochs if not args.debug else 3
         self.warmup_steps = args.warmup_steps
         self.cuda = args.cuda
         self.on_memory = args.on_memory
@@ -252,10 +251,10 @@ class TaskRunner(object):
                          from_pretrained: Optional[str],
                          fp16: bool,
                          learning_rate: float,
-                         pretrained_weight: Optional[str],
+                         # pretrained_weight: Optional[str],
                          loss_scale: int):
         no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-        if from_pretrained is None:
+        if True or from_pretrained is None:
             param_optimizer = list(model.named_parameters())
             optimizer_grouped_parameters = [
                 {
@@ -272,6 +271,8 @@ class TaskRunner(object):
                 },
             ]
         else:
+            raise NotImplementedError
+            pretrained_weight = None
             assert pretrained_weight is not None
             with open("config/" + pretrained_weight + "_weight_name.json", "r") as f:
                 bert_weight_name = json.load(f)
