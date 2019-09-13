@@ -35,7 +35,13 @@ def setup_logging(save_path: Path, local_rank: int) -> None:
 def path_to_datetime(path: Path) -> datetime:
     name = path.name
     datetime_string = name.split('_')[0]
-    year, month, day, hour, minute, second = datetime_string.split('-')
+    try:
+        year, month, day, hour, minute, second = datetime_string.split('-')
+    except ValueError:
+        # Deprecated datetime strings
+        year, month, day, time_str = datetime_string.split('-')
+        hour, minute, second = time_str.split(':')
+
     pathdatetime = datetime(
         int(year), int(month), int(day), int(hour), int(minute), int(second))
     return pathdatetime

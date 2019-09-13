@@ -1,8 +1,6 @@
-import torch.nn as nn
 import json
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers.modeling_utils import PretrainedConfig
-from pytorch_transformers.modeling_bert import BertConfig
 from pytorch_transformers.modeling_bert import BertModel
 
 from tape_pytorch.registry import registry
@@ -52,7 +50,7 @@ class TransformerConfig(PretrainedConfig):
                  initializer_range=0.02,
                  layer_norm_eps=1e-12,
                  **kwargs):
-        super(BertConfig, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         if isinstance(vocab_size_or_config_json_file, str):
             with open(vocab_size_or_config_json_file, "r", encoding='utf-8') as reader:
                 json_config = json.loads(reader.read())
