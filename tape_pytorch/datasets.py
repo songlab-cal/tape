@@ -95,7 +95,8 @@ class TAPEDataset(LMDBDataset):
 
         if isinstance(tokenizer, str):
             model_file = data_path / 'pfam.model'
-            tokenizer = registry.get_tokenizer_class(tokenizer).from_pretrained(model_file=model_file)
+            tokenizer = registry.get_tokenizer_class(tokenizer).from_pretrained(
+                model_file=model_file)
 
         assert isinstance(tokenizer, tokenizers.TAPETokenizer)
         self.tokenizer = tokenizer

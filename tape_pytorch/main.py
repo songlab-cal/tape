@@ -1,19 +1,13 @@
-from typing import Optional, Tuple, Union
-import sys
-import random
-import math
+from typing import Optional, Tuple, Type
 from time import strftime, gmtime
 from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
-from dataclasses import dataclass
-from datetime import datetime
 from itertools import islice
 from tqdm import tqdm
 
 import click
-import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
@@ -21,7 +15,6 @@ from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers import AdamW
 from pytorch_transformers import WarmupLinearSchedule
-from tensorboardX import SummaryWriter
 
 try:
     from apex import amp
@@ -32,456 +25,155 @@ except ImportError:
 
 from tape_pytorch.registry import registry
 from tape_pytorch.models.task_models import TAPEConfig
+from tape_pytorch.trainer import Trainer, RunConfig
+import tape_pytorch.utils as utils
+from tape_pytorch.datasets import TAPEDataset
 
 
 logger = logging.getLogger(__name__)
 
 
-class MetricsAccumulator:
+def setup_model(model_type: str,
+                task: str,
+                from_pretrained: Optional[str],
+                config_file: Optional[str]):
 
-    def __init__(self, smoothing: float = 0.95):
-        self._currloss: Optional[float] = None
-        self._smoothing = smoothing
-
-    def update(self, loss: float):
-        if self._currloss is None:
-            self._currloss = loss
+    model_cls = registry.get_task_model_class(task)
+    if from_pretrained is not None:
+        assert config_file is None
+        load_dir = Path(from_pretrained)
+        model = model_cls.from_pretrained(load_dir)
+    else:
+        if config_file is not None:
+            config = TAPEConfig.from_json_file(config_file)
         else:
-            self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
-
-    def loss(self) -> float:
-        if self._currloss is None:
-            raise RuntimeError("Trying to get the loss without any updates")
-        return self._currloss
-
-
-class TBLogger:
-
-    def __init__(self, log_dir: Union[str, Path], exp_name: str, local_rank: int):
-        is_master = local_rank in (-1, 0)
-        if is_master:
-            log_dir = Path(log_dir) / exp_name
-            logger.info(f"tensorboard file at: {log_dir}")
-            self.logger = SummaryWriter(log_dir=str(log_dir))
-        self._is_master = is_master
-
-    def line_plot(self, step, val, split, key, xlabel="None") -> None:
-        if self._is_master:
-            self.logger.add_scalar(split + "/" + key, val, step)
-            self.logger.flush()
-
-
-@dataclass(frozen=False)
-class TaskConfig:
-    task: str
-    model_type: str
-    config_file: Optional[str] = None
-    data_dir: str = 'data'
-    vocab_file: str = 'data/pfam.model'
-    pretrained_weight: Optional[str] = None
-    log_dir: str = 'logs'
-    output_dir: str = 'results'
-    train_batch_size: int = 4
-    learning_rate: float = 1e-4
-    num_train_epochs: int = 10
-    warmup_steps: int = 10000
-    cuda: bool = True
-    on_memory: bool = False
-    seed: int = 42
-    gradient_accumulation_steps: int = 1
-    fp16: bool = False
-    loss_scale: int = 0
-    num_workers: int = 20
-    from_pretrained: Optional[str] = None
-    exp_name: Optional[str] = None
-    local_rank: int = -1
-    tokenizer: str = 'bpe'
-    debug: bool = False
-
-
-class TaskRunner(object):
-
-    def __init__(self, args: TaskConfig):
-        super().__init__()
-        is_master = args.local_rank in (-1, 0)
-        device, n_gpu = self._setup_distributed(args.local_rank, args.cuda)
-
-        if is_master:
-            save_path, exp_name = self._get_savepath(args.output_dir, args.exp_name)
-            save_path.mkdir(parents=True, exist_ok=False)
-            # save all the hidden parameters.
-            with (save_path / 'command.txt').open('w') as f:
-                print(args, end='\n\n', file=f)
-
-            if torch.distributed.is_initialized():
-                torch.distributed.barrier()
-        else:
-            torch.distributed.barrier()
-            save_files = Path(args.output_dir).iterdir()
-            save_path = max(save_files, key=self._path_to_datetime)
-            exp_name = save_path.name
-
-        self._setup_logging(save_path, args.local_rank)
-
-        logger.info(
-            f"device: {device} "
-            f"n_gpu: {n_gpu}, "
-            f"distributed_training: {args.local_rank != -1}, "
-            f"16-bits training: {args.fp16}")
-
-        if args.gradient_accumulation_steps < 1:
-            raise ValueError(
-                f"Invalid gradient_accumulation_steps parameter: "
-                f"{args.gradient_accumulation_steps}, should be >= 1")
-
-        args.train_batch_size = args.train_batch_size // args.gradient_accumulation_steps
-
-        self._set_random_seeds(args.seed, n_gpu)
-
-        tokenizer = registry.get_tokenizer_class(
-            args.tokenizer).from_pretrained(args.vocab_file)
-
-        model = self._setup_model(
-            args.from_pretrained, args.model_type, args.task, args.config_file)
-
-        optimizer = self._setup_optimizer(
-            model, args.from_pretrained, args.fp16,
-            args.learning_rate, args.loss_scale)
-
-        if args.fp16:
-            if not APEX_FOUND:
-                raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex "
-                    "to use distributed and fp16 training.")
-            model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
-
-        if args.local_rank != -1:
-            if not APEX_FOUND:
-                raise ImportError(
-                    "Please install apex from https://www.github.com/nvidia/apex "
-                    "to use distributed and fp16 training.")
-            model = DDP(model)
-        elif n_gpu > 1:
-            model = nn.DataParallel(model)
-
-        # Store defaults
-        self.exp_name = exp_name
-        self.model = model
-        self.optimizer = optimizer
-        self.config = args
-        self.tokenizer = tokenizer
-        self.save_path = save_path
-        self.device = device
-        self.n_gpu = n_gpu
-        self.max_grad_norm = 1.0
-
-        # Store args
-        self.task = args.task
-        self.data_dir = args.data_dir
-        self.vocab_file = args.vocab_file
-        self.pretrained_weight = args.pretrained_weight
-        self.log_dir = args.log_dir
-        self.output_dir = args.output_dir
-        self.config_file = args.config_file
-        self.train_batch_size = args.train_batch_size
-        self.learning_rate = args.learning_rate
-        self.num_train_epochs = args.num_train_epochs if not args.debug else 3
-        self.warmup_steps = args.warmup_steps
-        self.cuda = args.cuda
-        self.on_memory = args.on_memory
-        self.seed = args.seed
-        self.gradient_accumulation_steps = args.gradient_accumulation_steps
-        self.fp16 = args.fp16
-        self.loss_scale = args.loss_scale
-        self.num_workers = args.num_workers
-        self.from_pretrained = args.from_pretrained
-        self.local_rank = args.local_rank
-        self.debug = args.debug
-
-    def _path_to_datetime(self, path: Path) -> datetime:
-        name = path.name
-        datetime_string = name.split('_')[0]
-        year, month, day, hour, minute, second = datetime_string.split('-')
-        pathdatetime = datetime(
-            int(year), int(month), int(day), int(hour), int(minute), int(second))
-        return pathdatetime
-
-    def _setup_logging(self, save_path: Path, local_rank: int):
-        log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
-        root_logger = logging.getLogger()
-        root_logger.setLevel(log_level)
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(log_level)
-        file_handler = logging.FileHandler(save_path / 'log')
-        file_handler.setLevel(log_level)
-
-        formatter = logging.Formatter(
-            "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-            datefmt="%y/%m/%d %H:%M:%S")
-        console_handler.setFormatter(formatter)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
-        root_logger.addHandler(file_handler)
-
-    def _setup_model(self,
-                     from_pretrained: Optional[str],
-                     model_type: str,
-                     task: str,
-                     config_file: Optional[str]):
-
-        model_cls = registry.get_task_model_class(task)
-        if from_pretrained is not None:
-            assert config_file is None
-            load_dir = Path(from_pretrained)
-            model = model_cls.from_pretrained(load_dir)
-        else:
-            if config_file is not None:
-                config = TAPEConfig.from_json_file(config_file)
-            else:
-                base_config = registry.get_model_class(model_type).config_class()
-                config = TAPEConfig(base_config, base_model=model_type)
-            model = model_cls(config)
-
-        model.cuda()
-
-        return model
-
-    def _setup_optimizer(self,
-                         model: PreTrainedModel,
-                         from_pretrained: Optional[str],
-                         fp16: bool,
-                         learning_rate: float,
-                         # pretrained_weight: Optional[str],
-                         loss_scale: int):
-        no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-        if True or from_pretrained is None:
-            param_optimizer = list(model.named_parameters())
-            optimizer_grouped_parameters = [
-                {
-                    "params": [
-                        p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
-                    ],
-                    "weight_decay": 0.01,
-                },
-                {
-                    "params": [
-                        p for n, p in param_optimizer if any(nd in n for nd in no_decay)
-                    ],
-                    "weight_decay": 0.0,
-                },
-            ]
-        else:
-            raise NotImplementedError
-            pretrained_weight = None
-            assert pretrained_weight is not None
-            with open("config/" + pretrained_weight + "_weight_name.json", "r") as f:
-                bert_weight_name = json.load(f)
-            optimizer_grouped_parameters = []
-            for key, value in dict(model.named_parameters()).items():
-                if value.requires_grad:
-                    if key[12:] in bert_weight_name:
-                        lr = learning_rate * 0.1
-                    else:
-                        lr = learning_rate
-
-                    if any(nd in key for nd in no_decay):
-                        optimizer_grouped_parameters += [
-                            {"params": [value], "lr": lr, "weight_decay": 0.01}
-                        ]
-
-                    if not any(nd in key for nd in no_decay):
-                        optimizer_grouped_parameters += [
-                            {"params": [value], "lr": lr, "weight_decay": 0.0}
-                        ]
-        if from_pretrained:
-            optimizer = AdamW(
-                optimizer_grouped_parameters)
-        else:
-            optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
-
-        return optimizer
-
-    def _get_savepath(self, output_dir: str, exp_name: Optional[str]) -> Tuple[Path, str]:
-        if exp_name is None:
-            time_stamp = strftime("%y-%m-%d-%H-%M-%S", gmtime())
-            exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
-
-        save_path = Path(output_dir) / exp_name
-        return save_path, exp_name
-
-    def _setup_distributed(self, local_rank: int, cuda: bool) -> Tuple[torch.device, int]:
-        if local_rank != -1 and cuda:
-            torch.cuda.set_device(local_rank)
-            device = torch.device("cuda", local_rank)
-            n_gpu = 1
-            torch.distributed.init_process_group(backend="nccl")
-        elif not torch.cuda.is_available() or not cuda:
-            device = torch.device("cpu")
-            n_gpu = torch.cuda.device_count()
-        else:
-            device = torch.device("cuda")
-            n_gpu = torch.cuda.device_count()
-
-        return device, n_gpu
-
-    def _set_random_seeds(self, seed: int, n_gpu: int) -> None:
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        if n_gpu > 0:
-            torch.cuda.manual_seed_all(seed)
-
-    def train(self):
-        viz = TBLogger(self.log_dir, self.exp_name, self.local_rank)
-        dataset_class = registry.get_dataset_class(self.task)
-        collate_fn_cls = registry.get_collate_fn_class(self.task)
-
-        train_dataset = dataset_class(self.data_dir, 'train', self.tokenizer)
-        valid_dataset = dataset_class(self.data_dir, 'valid', self.tokenizer)
-        sampler_type = (DistributedSampler if self.local_rank != -1 else RandomSampler)
-
-        train_loader = DataLoader(
-            train_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=collate_fn_cls(), sampler=sampler_type(train_dataset))
-        valid_loader = DataLoader(
-            valid_dataset, batch_size=self.train_batch_size, num_workers=self.num_workers,
-            collate_fn=collate_fn_cls(), sampler=sampler_type(valid_dataset))
-
-        num_train_optimization_steps = len(train_dataset)
-        num_train_optimization_steps /= self.train_batch_size
-        num_train_optimization_steps /= self.gradient_accumulation_steps
-        num_train_optimization_steps *= self.num_train_epochs
-        num_train_optimization_steps = int(num_train_optimization_steps)
-
-        if self.local_rank != -1:
-            num_train_optimization_steps //= torch.distributed.get_world_size()
-
-        scheduler = WarmupLinearSchedule(
-            self.optimizer, warmup_steps=self.warmup_steps,
-            t_total=num_train_optimization_steps)
-
-        logger.info("***** Running training *****")
-        logger.info("  Num examples = %d", len(train_dataset))
-        logger.info("  Batch size = %d", self.train_batch_size)
-        logger.info("  Num steps = %d", num_train_optimization_steps)
-
-        self._iter_id = 0
-        self._global_step = 0
-
-        for epoch_id in range(self.num_train_epochs):
-            self._run_train_epoch(
-                epoch_id, train_loader, scheduler, viz)
-            self._run_valid_epoch(
-                epoch_id, valid_loader, viz)
-
-            # Save trained model
-            logger.info("** ** * Saving trained model ** ** * ")
-
-            if self.local_rank in (-1, 0):
-                # Only save the model itself
-                output_model_dir = self.save_path / f"pytorch_model_{epoch_id}"
-                output_model_dir.mkdir()
-                model_to_save = getattr(self.model, 'module', self.model)
-                model_to_save.save_pretrained(output_model_dir)
-                logger.info(f"Saving model checkpoint to {output_model_dir}")
-
-    def _run_train_epoch(self,
-                         epoch_id: int,
-                         train_loader: DataLoader,
-                         scheduler: WarmupLinearSchedule,
-                         viz: TBLogger):
-        num_train_examples = 0
-        num_train_steps = 0
-        num_log_iter = 20
-        metrics = MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
-
-        torch.set_grad_enabled(True)
-        self.model.train()
-
-        start_t = timer()
-
-        if self.debug:
-            train_loader = islice(train_loader, 10)  # type: ignore
-
-        for step, batch in enumerate(train_loader):
-            self._iter_id += 1
-            batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
-            outputs = self.model(*batch)
-            loss = outputs[0]
-
-            if self.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu
-
-            metrics.update(loss.item())
-            viz.line_plot(self._iter_id, loss.item(), "loss", "train")
-            loss /= self.gradient_accumulation_steps
-
-            if self.fp16:
-                with amp.scale_loss(loss, self.optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
-
-            if math.isnan(loss.item()):
-                import pdb
-                pdb.set_trace()
-
-            num_train_examples += batch[0].size(0)
-            num_train_steps += 1
-
-            if (step + 1) % self.gradient_accumulation_steps == 0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), self.max_grad_norm)
-                self.optimizer.step()
-                scheduler.step()
-                self.optimizer.zero_grad()
-                self._global_step += 1
-
-            if (step + 1) % num_log_iter == 0:
-                end_t = timer()
-                time_stamp = strftime("%y-%m-%d %X", gmtime())
-
-                ep = epoch_id + num_train_steps / float(len(train_loader))
-                print_str = [
-                    f"[{time_stamp}]",
-                    f"[Ep: {ep:.2f}]",
-                    f"[Iter: {num_train_steps}]",
-                    f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {metrics.loss():.5g}]",
-                    f"[LR: {scheduler.get_lr()[0]:.5g}]"]
-                start_t = end_t
-
-                logger.info(''.join(print_str))
-
-    def _run_valid_epoch(self,
-                         epoch_id: int,
-                         valid_loader: DataLoader,
-                         viz: TBLogger):
-        num_batches = len(valid_loader)
-        eval_loss = 0.
-
-        torch.set_grad_enabled(False)
-        self.model.eval()
-
-        if self.debug:
-            valid_loader = islice(valid_loader, 10)  # type: ignore
-
-        for step, batch in tqdm(enumerate(valid_loader), desc='Evaluating split val'):
-            batch = tuple(t.cuda(device=self.device, non_blocking=True) for t in batch)
-            outputs = self.model(*batch)
-            loss = outputs[0]
-
-            if self.n_gpu > 1:
-                loss = loss.mean()  # mean() to average on multi-gpu
-
-            eval_loss += loss.item()
-
-        eval_loss /= num_batches
-
-        print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-
-        logger.info(print_str)
-        viz.line_plot(epoch_id, eval_loss, "loss", "val")
+            base_config = registry.get_model_class(model_type).config_class()
+            config = TAPEConfig(base_config, base_model=model_type)
+        model = model_cls(config)
+
+    model.cuda()
+
+    return model
+
+
+def setup_optimizer(model: PreTrainedModel,
+                    learning_rate: float):
+
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+    param_optimizer = list(model.named_parameters())
+    optimizer_grouped_parameters = [
+        {
+            "params": [
+                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.01,
+        },
+        {
+            "params": [
+                p for n, p in param_optimizer if any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.0,
+        },
+    ]
+
+    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
+
+    return optimizer
+
+
+def setup_dataset_and_loader(run_config: RunConfig,
+                             dataset_type: str) -> Tuple[TAPEDataset, DataLoader]:
+
+    dataset_class: Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
+        run_config.task)
+    collate_fn_cls = registry.get_collate_fn_class(run_config.task)
+    sampler_type = (DistributedSampler if run_config.local_rank != -1 else RandomSampler)
+
+    dataset = dataset_class(run_config.data_dir, dataset_type, run_config.tokenizer)
+
+    loader = DataLoader(  # type: ignore
+        dataset,
+        batch_size=run_config.batch_size_per_gpu_forward,  # actual batch size
+        num_workers=run_config.num_workers,
+        collate_fn=collate_fn_cls(),
+        sampler=sampler_type(dataset))
+
+    return loader
+
+
+def get_num_train_optimization_steps(train_loader: DataLoader, run_config: RunConfig) -> int:
+    return int(len(train_loader) / run_config.train_batch_size * run_config.num_train_epochs)
+
+
+def run_train_epoch(epoch_id: int,
+                    train_loader: DataLoader,
+                    trainer: Trainer,
+                    viz: utils.TBLogger,
+                    run_config: RunConfig):
+    metrics = utils.MetricsAccumulator(smoothing=1 - 1 / run_config.num_log_iter)
+
+    torch.set_grad_enabled(True)
+    trainer.model.train()
+
+    start_t = timer()
+
+    if run_config.debug:
+        train_loader = islice(train_loader, 10)  # type: ignore
+
+    loss_tmp = 0.
+    for step, batch in enumerate(train_loader):
+        loss = trainer.forward(batch)
+        loss /= run_config.gradient_accumulation_steps
+        loss_tmp += loss.item()
+        trainer.backward(loss)
+
+        if (step + 1) % run_config.gradient_accumulation_steps == 0:
+            trainer.step()
+            metrics.update(loss_tmp)
+            viz.line_plot(trainer.global_step, loss_tmp, "loss", "train")
+            loss_tmp = 0.
+
+        if (step + 1) % run_config.num_log_iter == 0:
+            end_t = timer()
+            time_stamp = strftime("%y-%m-%d %X", gmtime())
+
+            ep = epoch_id + step / float(len(train_loader))
+            print_str = [
+                f"[{time_stamp}]",
+                f"[Ep: {ep:.2f}]",
+                f"[Iter: {trainer.global_step}]",
+                f"[Time: {end_t - start_t:5.2f}s]",
+                f"[Loss: {metrics.loss():.5g}]",
+                f"[LR: {trainer.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
+            start_t = end_t
+
+            logger.info(''.join(print_str))
+
+
+def run_valid_epoch(epoch_id: int,
+                    valid_loader: DataLoader,
+                    trainer: Trainer,
+                    viz: utils.TBLogger,
+                    run_config: RunConfig):
+    num_batches = len(valid_loader)
+    eval_loss = 0.
+
+    torch.set_grad_enabled(False)
+    trainer.model.eval()
+
+    if run_config.debug:
+        valid_loader = islice(valid_loader, 10)  # type: ignore
+
+    for step, batch in tqdm(enumerate(valid_loader), desc='Evaluating split val'):
+        loss = trainer.forward(batch)
+        eval_loss += loss.item()
+
+    eval_loss /= num_batches
+
+    print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
+
+    logger.info(print_str)
+    viz.line_plot(epoch_id, eval_loss, "loss", "val")
 
 
 @click.command()
@@ -496,9 +188,10 @@ class TaskRunner(object):
 @click.option('--pretrained-weight', default=None, type=click.Path(exists=True, dir_okay=False))
 @click.option('--log-dir', default='logs', type=click.Path())
 @click.option('--output-dir', default='results', type=click.Path())
-@click.option('--train-batch-size', default=4, type=int)
+@click.option('--train-batch-size', default=1024, type=int)
 @click.option('--learning-rate', default=1e-4, type=float)
 @click.option('--num-train-epochs', default=10, type=int)
+@click.option('--num-log-iter', default=20, type=int)
 @click.option('--warmup-steps', default=10000, type=int)
 @click.option('--cuda/--no-cuda', default=True)
 @click.option('--on-memory', is_flag=True)
@@ -511,6 +204,7 @@ class TaskRunner(object):
 @click.option('--exp-name', default=None, type=str)
 @click.option('--local_rank', default=-1, type=int)
 @click.option('--tokenizer', type=click.Choice(['bpe', 'dummy']), default='bpe')
+@click.option('--max-grad-norm', default=1.0, type=float)
 @click.option('--debug/--no-debug', default=False)
 def main(task: str,
          model_type: str,
@@ -520,9 +214,10 @@ def main(task: str,
          pretrained_weight: Optional[str] = None,
          log_dir: str = 'logs',
          output_dir: str = 'results',
-         train_batch_size: int = 4,
+         train_batch_size: int = 1024,
          learning_rate: float = 1e-4,
          num_train_epochs: int = 10,
+         num_log_iter: int = 20,
          warmup_steps: int = 10000,
          cuda: bool = True,
          on_memory: bool = False,
@@ -535,19 +230,72 @@ def main(task: str,
          exp_name: Optional[str] = None,
          local_rank: int = -1,
          tokenizer: str = 'bpe',
+         max_grad_norm: float = 1.0,
          debug: bool = False):
 
-    config = TaskConfig(
-        task, model_type, config_file,
-        data_dir, vocab_file, pretrained_weight, log_dir,
-        output_dir, train_batch_size, learning_rate,
-        num_train_epochs, warmup_steps, cuda,
-        on_memory, seed, gradient_accumulation_steps,
-        fp16, loss_scale, num_workers, from_pretrained,
-        exp_name, local_rank, tokenizer, debug)
+    run_config = RunConfig(
+        local_rank, task, data_dir, num_train_epochs, num_log_iter, tokenizer, cuda, fp16,
+        max_grad_norm, gradient_accumulation_steps, train_batch_size, seed, num_workers,
+        warmup_steps, debug)
 
-    runner = TaskRunner(config)
-    runner.train()
+    save_path, exp_name = utils.get_savepath_and_expname(
+        output_dir, exp_name, run_config.is_master)
+
+    if run_config.is_master:
+        # save all the hidden parameters.
+        with (save_path / 'command.txt').open('w') as f:
+            json.dump(run_config.to_dict(), f)
+
+    utils.setup_logging(save_path, run_config.local_rank)
+    utils.set_random_seeds(run_config.seed, run_config.n_gpu)
+
+    logger.info(
+        f"device: {run_config.device} "
+        f"n_gpu: {run_config.n_gpu}, "
+        f"distributed_training: {run_config.local_rank != -1}, "
+        f"16-bits training: {run_config.use_fp16}")
+
+    tokenizer = registry.get_tokenizer_class(tokenizer).from_pretrained(vocab_file)
+    model = setup_model(model_type, task, from_pretrained, config_file)
+    optimizer = setup_optimizer(model, learning_rate)
+    viz = utils.TBLogger(log_dir, exp_name, run_config.local_rank)
+
+    if run_config.use_fp16:
+        model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
+    if run_config.local_rank != -1:
+        model = DDP(model)
+    elif run_config.n_gpu > 1:
+        model = nn.DataParallel(model)
+
+    train_dataset, train_loader = setup_dataset_and_loader(run_config, 'train')
+    valid_dataset, valid_loader = setup_dataset_and_loader(run_config, 'valid')
+
+    num_train_optimization_steps = get_num_train_optimization_steps(train_loader, run_config)
+
+    scheduler = WarmupLinearSchedule(
+        optimizer, warmup_steps=run_config.warmup_steps, t_total=num_train_optimization_steps)
+
+    trainer = Trainer(model, optimizer, scheduler, run_config)
+
+    logger.info("***** Running training *****")
+    logger.info("  Num examples = %d", len(train_dataset))
+    logger.info("  Batch size = %d", run_config.train_batch_size)
+    logger.info("  Num steps = %d", num_train_optimization_steps)
+
+    for epoch_id in range(num_train_epochs):
+        run_train_epoch(epoch_id, train_loader, trainer, viz, run_config)
+        run_valid_epoch(epoch_id, valid_loader, trainer, viz, run_config)
+
+        # Save trained model
+        logger.info("** ** * Saving trained model ** ** * ")
+
+        if run_config.is_master:
+            # Only save the model itself
+            output_model_dir = save_path / f"pytorch_model_{epoch_id}"
+            output_model_dir.mkdir()
+            model_to_save = getattr(model, 'module', model)
+            model_to_save.save_pretrained(output_model_dir)
+            logger.info(f"Saving model checkpoint to {output_model_dir}")
 
 
 if __name__ == '__main__':
