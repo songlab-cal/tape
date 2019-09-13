@@ -94,6 +94,8 @@ class MetricsAccumulator:
 
     def __init__(self, smoothing: float = 0.95):
         self._currloss: Optional[float] = None
+        self._totalloss = 0.
+        self._nupdates = 0
         self._smoothing = smoothing
 
     def update(self, loss: float):
@@ -102,7 +104,13 @@ class MetricsAccumulator:
         else:
             self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
 
+        self._totalloss += loss
+        self._nupdates += 1
+
     def loss(self) -> float:
         if self._currloss is None:
             raise RuntimeError("Trying to get the loss without any updates")
         return self._currloss
+
+    def final_loss(self) -> float:
+        return self._totalloss / self._nupdates

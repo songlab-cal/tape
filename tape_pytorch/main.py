@@ -133,21 +133,23 @@ def run_train_epoch(epoch_id: int,
             viz.line_plot(trainer.global_step, loss_tmp, "loss", "train")
             loss_tmp = 0.
 
-        if (step + 1) % run_config.num_log_iter == 0:
-            end_t = timer()
-            time_stamp = strftime("%y-%m-%d %X", gmtime())
+            if trainer.global_step % run_config.num_log_iter == 0:
+                end_t = timer()
+                time_stamp = strftime("%y-%m-%d %X", gmtime())
 
-            ep = epoch_id + step / float(len(train_loader))
-            print_str = [
-                f"[{time_stamp}]",
-                f"[Ep: {ep:.2f}]",
-                f"[Iter: {trainer.global_step}]",
-                f"[Time: {end_t - start_t:5.2f}s]",
-                f"[Loss: {metrics.loss():.5g}]",
-                f"[LR: {trainer.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
-            start_t = end_t
+                ep = epoch_id + step / float(len(train_loader))
+                print_str = [
+                    f"[{time_stamp}]",
+                    f"[Ep: {ep:.2f}]",
+                    f"[Iter: {trainer.global_step}]",
+                    f"[Time: {end_t - start_t:5.2f}s]",
+                    f"[Loss: {metrics.loss():.5g}]",
+                    f"[LR: {trainer.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
+                start_t = end_t
 
-            logger.info(''.join(print_str))
+                logger.info(''.join(print_str))
+
+    logger.info(f"Train: [Loss: {metrics.final_loss():.5g}]")
 
 
 def run_valid_epoch(epoch_id: int,
@@ -280,7 +282,8 @@ def main(task: str,
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Batch size = %d", run_config.train_batch_size)
-    logger.info("  Num steps = %d", num_train_optimization_steps)
+    logger.info("  Num epochs = %d", run_config.num_train_epochs)
+    logger.info("  Num train steps = %d", num_train_optimization_steps)
 
     for epoch_id in range(num_train_epochs):
         run_train_epoch(epoch_id, train_loader, trainer, viz, run_config)
