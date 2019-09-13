@@ -98,11 +98,11 @@ def setup_dataset_and_loader(run_config: RunConfig,
         collate_fn=collate_fn_cls(),
         sampler=sampler_type(dataset))
 
-    return loader
+    return dataset, loader
 
 
-def get_num_train_optimization_steps(train_loader: DataLoader, run_config: RunConfig) -> int:
-    return int(len(train_loader) / run_config.train_batch_size * run_config.num_train_epochs)
+def get_num_train_optimization_steps(train_dataset: TAPEDataset, run_config: RunConfig) -> int:
+    return int(len(train_dataset) / run_config.train_batch_size * run_config.num_train_epochs)
 
 
 def run_train_epoch(epoch_id: int,
@@ -270,7 +270,7 @@ def main(task: str,
     train_dataset, train_loader = setup_dataset_and_loader(run_config, 'train')
     valid_dataset, valid_loader = setup_dataset_and_loader(run_config, 'valid')
 
-    num_train_optimization_steps = get_num_train_optimization_steps(train_loader, run_config)
+    num_train_optimization_steps = get_num_train_optimization_steps(train_dataset, run_config)
 
     scheduler = WarmupLinearSchedule(
         optimizer, warmup_steps=run_config.warmup_steps, t_total=num_train_optimization_steps)

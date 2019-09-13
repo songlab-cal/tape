@@ -1,4 +1,3 @@
-import copy
 import logging
 
 import torch
@@ -73,7 +72,7 @@ class RunConfig:
         self.debug = debug
 
     def to_dict(self) -> dict:
-        return copy.deepcopy(self.__dict__)
+        return {key: str(value) for key, value in self.__dict__.items()}
 
     @property
     def batch_size_per_gpu_forward(self) -> int:
