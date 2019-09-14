@@ -22,7 +22,8 @@ class LMDBDataset(Dataset):
     """Creates the Pfam Dataset
     Args:
         data_file (Union[str, Path]): Path to lmdb file.
-        in_memory (bool, optional): Whether to load the full dataset into memory. Default: False.
+        in_memory (bool, optional): Whether to load the full dataset into memory.
+            Default: False.
     """
 
     def __init__(self,
@@ -103,7 +104,8 @@ class TAPEDataset(LMDBDataset):
         self._convert_tokens_to_ids = convert_tokens_to_ids
         super().__init__(data_path / data_file, in_memory)
 
-    def __getitem__(self, index: int) -> Tuple[Dict[str, Any], Union[List[int], List[str]], List[int]]:
+    def __getitem__(self, index: int) -> \
+            Tuple[Dict[str, Any], Union[List[int], List[str]], List[int]]:
         item = super().__getitem__(index)
         tokens = self.tokenizer.tokenize(item['primary'])
         tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
@@ -122,7 +124,8 @@ class PfamDataset(TAPEDataset):
     Args:
         data_path (Union[str, Path]): Path to tape data root.
         mode (str): One of ['train', 'valid', 'holdout'], specifies which data file to load.
-        in_memory (bool, optional): Whether to load the full dataset into memory. Default: False.
+        in_memory (bool, optional): Whether to load the full dataset into memory.
+            Default: False.
     """
 
     def __init__(self,
@@ -132,12 +135,15 @@ class PfamDataset(TAPEDataset):
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'holdout'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'holdout']")
+            raise ValueError(
+                f"Unrecognized mode: {mode}. "
+                f"Must be one of ['train', 'valid', 'holdout']")
 
         data_path = Path(data_path)
         data_file = f'pfam/pfam_{mode}.lmdb'
 
-        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
+        super().__init__(
+            data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
 
     def __getitem__(self, index):
         item, tokens, attention_mask = super().__getitem__(index)
@@ -204,7 +210,8 @@ class FluorescenceDataset(TAPEDataset):
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'test']")
+            raise ValueError(f"Unrecognized mode: {mode}. "
+                             f"Must be one of ['train', 'valid', 'test']")
 
         data_path = Path(data_path)
         data_file = f'fluorescence/fluorescence_{mode}.lmdb'
@@ -238,7 +245,8 @@ class StabilityDataset(TAPEDataset):
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of ['train', 'valid', 'test']")
+            raise ValueError(f"Unrecognized mode: {mode}. "
+                             f"Must be one of ['train', 'valid', 'test']")
 
         data_path = Path(data_path)
         data_file = f'stability/stability_{mode}.lmdb'
@@ -264,7 +272,8 @@ class RemoteHomologyDataset(TAPEDataset):
                  tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'test_fold_holdout', 'test_family_holdout', 'test_superfamily_holdout'):
+        if mode not in ('train', 'valid', 'test_fold_holdout',
+                        'test_family_holdout', 'test_superfamily_holdout'):
             raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
                              f"['train', 'valid', 'test_fold_holdout', "
                              f"'test_family_holdout', 'test_superfamily_holdout']")
