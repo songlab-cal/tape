@@ -260,7 +260,14 @@ class StabilityDataset(TAPEDataset):
 
 @registry.register_collate_fn('stability')
 class StabilityBatch(PaddedBatch):
-    pass
+
+    def __call__(self, batch):
+        input_ids, input_mask, stability_score = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        stability_score = torch.FloatTensor(stability_score)
+
+        return input_ids, input_mask, stability_score
 
 
 @registry.register_dataset('remote_homology')
@@ -290,7 +297,14 @@ class RemoteHomologyDataset(TAPEDataset):
 
 @registry.register_collate_fn('remote_homology')
 class RemoteHomologyBatch(PaddedBatch):
-    pass
+
+    def __call__(self, batch):
+        input_ids, input_mask, fold_label = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        fold_label = torch.LongTensor(fold_label)
+
+        return input_ids, input_mask, fold_label
 
 
 @registry.register_dataset('proteinnet')
@@ -352,4 +366,11 @@ class SecondaryStructureDataset(TAPEDataset):
 
 @registry.register_collate_fn('secondary_structure')
 class SecondaryStructureBatch(PaddedBatch):
-    pass
+
+    def __call__(self, batch):
+        input_ids, input_mask, ss_label = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        ss_label = torch.LongTensor(ss_label)
+
+        return input_ids, input_mask, ss_label
