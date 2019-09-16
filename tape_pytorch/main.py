@@ -99,6 +99,21 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
+def get_effective_num_gpus(args: argparse.Namespace) -> int:
+    if args.local_rank == -1:
+        num_gpus = args.n_gpu
+    else:
+        num_gpus = torch.distributed.get_world_size()
+    return num_gpus
+
+
+def get_effective_batch_size(args: argparse.Namespace) -> int:
+    batch_size = float(args.train_batch_size)
+    batch_size /= args.gradient_accumulation_steps
+    batch_size /= get_effective_num_gpus(args)
+    return int(batch_size)
+
+
 def setup_dataset_and_loader(args: argparse.Namespace,
                              dataset_type: str) -> Tuple[TAPEDataset, DataLoader]:
 
@@ -109,15 +124,9 @@ def setup_dataset_and_loader(args: argparse.Namespace,
 
     dataset = dataset_class(args.data_dir, dataset_type, args.tokenizer)
 
-    batch_size = float(args.train_batch_size)
-    batch_size /= args.gradient_accumulation_steps
-    batch_size /= args.n_gpu
-    if args.local_rank != -1:
-        batch_size /= torch.distributed.get_world_size()
-
     loader = DataLoader(  # type: ignore
         dataset,
-        batch_size=int(batch_size),
+        batch_size=get_effective_batch_size(args),
         num_workers=args.num_workers,
         collate_fn=collate_fn_cls(),
         sampler=sampler_type(dataset))
@@ -350,8 +359,19 @@ def run_train():
     logger.info("  Num train steps = %d", num_train_optimization_steps)
 
     for epoch_id in range(args.num_train_epochs):
-        run_train_epoch(epoch_id, train_loader, trainer, viz, args)
-        run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
+        try:
+            run_train_epoch(epoch_id, train_loader, trainer, viz, args)
+            run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
+        except RuntimeError as e:
+            if 'CUDA out of memory' in e.args[0]:
+                message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
+                           f"divide each batch over more forward passes. Current overall "
+                           f"batch_size: {args.train_batch_size}, gradient_accumulation_steps: "
+                           f"{args.gradient_accumulation_steps}, effective n_gpu: "
+                           f"{get_effective_num_gpus(args)}, effective batch_size: "
+                           f"{get_effective_batch_size(args)}")
+                raise RuntimeError(message).with_traceback(e.__traceback__)
+            raise
 
         # Save trained model
         logger.info("** ** * Saving trained model ** ** * ")
