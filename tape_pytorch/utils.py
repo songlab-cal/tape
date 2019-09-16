@@ -1,10 +1,12 @@
-from typing import Union, Optional, Tuple
+from typing import Union, Optional, Tuple, TypeVar
 import random
 import sys
 from pathlib import Path
 import logging
 from time import strftime, gmtime
 from datetime import datetime
+import os
+import argparse
 
 import numpy as np
 import torch
@@ -14,22 +16,39 @@ from tensorboardX import SummaryWriter
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(save_path: Path, local_rank: int) -> None:
+def check_is_file(file_path: str) -> str:
+    if file_path is None or os.path.isfile(file_path):
+        return file_path
+    else:
+        raise argparse.ArgumentTypeError(f"File path: {file_path} is not a valid file")
+
+
+def check_is_dir(dir_path: str) -> str:
+    if dir_path is None or os.path.isdir(dir_path):
+        return dir_path
+    else:
+        raise argparse.ArgumentTypeError(f"Directory path: {dir_path} is not a valid directory")
+
+
+def setup_logging(local_rank: int, save_path: Optional[Path] = None) -> None:
     log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    file_handler = logging.FileHandler(save_path / 'log')
-    file_handler.setLevel(log_level)
 
     formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%y/%m/%d %H:%M:%S")
+
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
-    file_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
-    root_logger.addHandler(file_handler)
+
+    if save_path is not None:
+        file_handler = logging.FileHandler(save_path / 'log')
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
 
 
 def path_to_datetime(path: Path) -> datetime:

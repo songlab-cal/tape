@@ -18,4 +18,10 @@ setup(
     url='https://github.com/rmrao/tape-pytorch',
     # license=LICENSE,
     install_requires=[],
+    entry_points={
+        'console_scripts': [
+            'tape-train = tape_pytorch.main:run_train',
+            'tape-eval = tape_pytorch.main:run_eval'
+        ]
+    },
 )
