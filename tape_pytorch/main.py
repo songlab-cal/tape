@@ -36,16 +36,16 @@ logger = logging.getLogger(__name__)
 def setup_model(model_type: str,
                 task: str,
                 from_pretrained: Optional[str],
-                config_file: Optional[str]):
+                model_config_file: Optional[str]):
 
     model_cls = registry.get_task_model_class(task)
     if from_pretrained is not None:
-        assert config_file is None
+        assert model_config_file is None
         load_dir = Path(from_pretrained)
         model = model_cls.from_pretrained(load_dir)
     else:
-        if config_file is not None:
-            config = TAPEConfig.from_json_file(config_file)
+        if model_config_file is not None:
+            config = TAPEConfig.from_json_file(model_config_file)
         else:
             base_config = registry.get_model_class(model_type).config_class()
             config = TAPEConfig(base_config, base_model=model_type)
@@ -108,7 +108,7 @@ def get_effective_num_gpus(args: argparse.Namespace) -> int:
 
 
 def get_effective_batch_size(args: argparse.Namespace) -> int:
-    batch_size = float(args.train_batch_size)
+    batch_size = float(args.batch_size)
     batch_size /= args.gradient_accumulation_steps
     batch_size /= get_effective_num_gpus(args)
     return int(batch_size)
@@ -136,7 +136,7 @@ def setup_dataset_and_loader(args: argparse.Namespace,
 
 def get_num_train_optimization_steps(train_dataset: TAPEDataset,
                                      args: argparse.Namespace) -> int:
-    return int(len(train_dataset) / args.train_batch_size * args.num_train_epochs)
+    return int(len(train_dataset) / args.batch_size * args.num_train_epochs)
 
 
 def run_train_epoch(epoch_id: int,
@@ -247,18 +247,15 @@ def create_base_parser() -> argparse.ArgumentParser:
                         help='TAPE Task to train/eval on')
     parser.add_argument('model_type', choices=list(registry.model_name_mapping.keys()),
                         help='Base model class to run')
-    parser.add_argument('--config-file', default=None, type=utils.check_is_file,
+    parser.add_argument('--model-config-file', default=None, type=utils.check_is_file,
                         help='Config file for model')
     parser.add_argument('--data-dir', default='./data', type=utils.check_is_dir,
                         help='Directory from which to load task data')
     parser.add_argument('--vocab-file', default='data/pfam.model', type=utils.check_is_file,
                         help='Pretrained tokenizer vocab file')
-    parser.add_argument('--log-dir', default='./logs', type=str)
     parser.add_argument('--output-dir', default='./results', type=str)
     parser.add_argument('--no-cuda', action='store_true', help='CPU-only flag')
     parser.add_argument('--seed', default=42, type=int, help='Random seed to use')
-    parser.add_argument('--from-pretrained', default=None, type=utils.check_is_dir,
-                        help='Directory containing config and pretrained model weights')
     parser.add_argument('--local_rank', type=int, default=-1,
                         help='Local rank of process in distributed training. '
                              'Set by launch script.')
@@ -274,8 +271,6 @@ def create_base_parser() -> argparse.ArgumentParser:
 def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Run Training on the TAPE datasets',
                                      parents=[base_parser])
-    parser.add_argument('--train-batch-size', default=1024, type=int,
-                        help='Batch size')
     parser.add_argument('--learning-rate', default=1e-4, type=float,
                         help='Learning rate')
     parser.add_argument('--num-train-epochs', default=10, type=int,
@@ -293,6 +288,20 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Maximum gradient norm')
     parser.add_argument('--exp-name', default=None, type=str,
                         help='Name to give to this experiment')
+    parser.add_argument('--from-pretrained', default=None, type=utils.check_is_dir,
+                        help='Directory containing config and pretrained model weights')
+    parser.add_argument('--log-dir', default='./logs', type=str)
+    return parser
+
+
+def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description='Run Eval on the TAPE Datasets',
+                                     parents=[base_parser])
+    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+                        help='Directory containing config and pretrained model weights')
+    parser.add_argument('outdir', type=str, help='Directory in which to output results')
+    parser.add_argument('--batch-size', default=1024, type=int,
+                        help='Batch size')
     return parser
 
 
@@ -331,7 +340,8 @@ def run_train():
         f"distributed_training: {args.local_rank != -1}, "
         f"16-bits training: {args.fp16}")
 
-    model = setup_model(args.model_type, args.task, args.from_pretrained, args.config_file)
+    model = setup_model(
+        args.model_type, args.task, args.from_pretrained, args.model_config_file)
     optimizer = setup_optimizer(model, args.learning_rate)
     viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
 
@@ -354,7 +364,7 @@ def run_train():
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Batch size = %d", args.train_batch_size)
+    logger.info("  Batch size = %d", args.batch_size)
     logger.info("  Num epochs = %d", args.num_train_epochs)
     logger.info("  Num train steps = %d", num_train_optimization_steps)
 
@@ -367,7 +377,7 @@ def run_train():
                 message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
                            f"divide each batch over more forward passes.\n\n"
                            f"\tHyperparameters:\n"
-                           f"\t\tbatch_size per backward-pass: {args.train_batch_size}\n"
+                           f"\t\tbatch_size per backward-pass: {args.batch_size}\n"
                            f"\t\tgradient_accumulation_steps: "
                            f"{args.gradient_accumulation_steps}\n"
                            f"\t\tn_gpu: {get_effective_num_gpus(args)}\n"
@@ -397,14 +407,15 @@ def run_eval():
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
-    utils.setup_logging(args.local_rank)
+    utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 
     logger.info(
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
 
-    model = setup_model(args.model_type, args.task, args.from_pretrained, args.config_file)
+    model = setup_model(
+        args.model_type, args.task, args.from_pretrained, args.model_config_file)
 
     if args.n_gpu > 1:
         model = nn.DataParallel(model)
