@@ -365,10 +365,13 @@ def run_train():
         except RuntimeError as e:
             if 'CUDA out of memory' in e.args[0]:
                 message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
-                           f"divide each batch over more forward passes. Current overall "
-                           f"batch_size: {args.train_batch_size}, gradient_accumulation_steps: "
-                           f"{args.gradient_accumulation_steps}, effective n_gpu: "
-                           f"{get_effective_num_gpus(args)}, effective batch_size: "
+                           f"divide each batch over more forward passes.\n\n"
+                           f"\tHyperparameters:\n"
+                           f"\t\tbatch_size per backward-pass: {args.train_batch_size}\n"
+                           f"\t\tgradient_accumulation_steps: "
+                           f"{args.gradient_accumulation_steps}\n"
+                           f"\t\tn_gpu: {get_effective_num_gpus(args)}\n"
+                           f"\t\tbatch_size per (gpu * forward-pass): "
                            f"{get_effective_batch_size(args)}")
                 raise RuntimeError(message).with_traceback(e.__traceback__)
             raise
