@@ -204,7 +204,8 @@ def run_valid_epoch(epoch_id: int,
     if args.debug:
         valid_loader = itertools.islice(valid_loader, 10)  # type: ignore
 
-    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches):
+    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches,
+                      disable=not args.is_master):
         loss = trainer.forward(batch)
         eval_loss += loss.item()
 
@@ -230,7 +231,8 @@ def run_eval_epoch(eval_loader: DataLoader,
 
     save_outputs = []
 
-    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches):
+    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches,
+                      disable=not args.is_master):
         cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
                       for name, tensor in batch.items()}
         outputs = model(**cuda_batch)
@@ -328,7 +330,8 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
     parser.add_argument('--batch-size', default=1024, type=int,
                         help='Batch size')
     parser.add_argument('--save-callback', default=['save_default'],
-                        help='Callbacks to use when saving',
+                        help=f'Callbacks to use when saving. '
+                             f'Choices: {list(registry.callback_name_mapping.keys())}',
                         nargs='*')
     return parser
 
