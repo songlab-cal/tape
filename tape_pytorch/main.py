@@ -336,6 +336,8 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                         help=f'Metrics to run on the result. '
                              f'Choices: {list(registry.metric_name_mapping.keys())}',
                         nargs='*')
+    parser.add_argument('--split', default='test', type=str,
+                        help='Which split to run on')
     return parser
 
 
@@ -458,7 +460,7 @@ def run_eval():
     if args.n_gpu > 1:
         model = nn.DataParallel(model)
 
-    valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
+    valid_dataset, valid_loader = setup_dataset_and_loader(args, args.split)
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
 
