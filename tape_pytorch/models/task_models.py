@@ -117,7 +117,8 @@ class TAPEPreTrainedModel(PreTrainedModel):
 @registry.register_task_model('pfam')
 class MaskedLMModel(TAPEPreTrainedModel):
 
-    LM_PREDICTIONS_KEY = 'prediction_scores'
+    TARGET_KEY = 'masked_lm_labels'
+    PREDICTION_KEY = 'prediction_scores'
 
     def __init__(self, config):
         super().__init__(config)
@@ -147,7 +148,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
                             attention_mask=attention_mask, head_mask=None))
         prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
 
-        outputs[cls.LM_PREDICTIONS_KEY] = prediction_scores
+        outputs[cls.PREDICTION_KEY] = prediction_scores
         # Add hidden states and attention if they are here
         outputs = (prediction_scores,) + outputs[2:]
         if masked_lm_labels is not None:
@@ -165,6 +166,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
 @registry.register_task_model('stability')
 class FloatPredictModel(TAPEPreTrainedModel):
 
+    TARGET_KEY = 'target'
     PREDICTION_KEY = 'float_prediction'
 
     def __init__(self, config):
@@ -198,6 +200,7 @@ class FloatPredictModel(TAPEPreTrainedModel):
 @registry.register_task_model('remote_homology')
 class SequenceClassificationModel(TAPEPreTrainedModel):
 
+    TARGET_KEY = 'label'
     PREDICTION_KEY = 'class_scores'
 
     def __init__(self, base_model, config):
@@ -229,6 +232,7 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
 @registry.register_task_model('secondary_structure')
 class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
+    TARGET_KEY = 'sequence_labels'
     PREDICTION_KEY = 'sequence_class_scores'
 
     def __init__(self, config):

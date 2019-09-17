@@ -153,7 +153,8 @@ class PfamDataset(TAPEDataset):
         masked_token_ids = np.array(
             self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
 
-        return masked_token_ids, attention_mask, labels, item['clan'], item['family']
+        return masked_token_ids, attention_mask, labels, \
+            item['protein_length'], item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
         masked_tokens = copy(tokens)
@@ -224,7 +225,8 @@ class FluorescenceDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, float(item['log_fluorescence'][0])
+        return token_ids, attention_mask, \
+            float(item['log_fluorescence'][0]), item['protein_length']
 
 
 @registry.register_collate_fn('fluorescence')
@@ -261,7 +263,8 @@ class StabilityDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, float(item['stability_score'][0])
+        return token_ids, attention_mask, \
+            float(item['stability_score'][0]), item['protein_length']
 
 
 @registry.register_collate_fn('stability')
@@ -300,7 +303,7 @@ class RemoteHomologyDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item['fold_label']
+        return token_ids, attention_mask, item['fold_label'], item['protein_length']
 
 
 @registry.register_collate_fn('remote_homology')
@@ -340,7 +343,7 @@ class ProteinnetDataset(TAPEDataset):
         valid_mask = item['valid_mask']
         contact_map = squareform(pdist(item['tertiary'])) < 8.0
 
-        return token_ids, attention_mask, contact_map, valid_mask
+        return token_ids, attention_mask, contact_map, valid_mask, item['protein_length']
 
 
 @registry.register_collate_fn('proteinnet')
@@ -371,7 +374,7 @@ class SecondaryStructureDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item[f'ss{self._num_classes}']
+        return token_ids, attention_mask, item[f'ss{self._num_classes}'], item['protein_length']
 
 
 @registry.register_collate_fn('secondary_structure')

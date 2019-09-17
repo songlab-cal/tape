@@ -1,15 +1,28 @@
-from typing import Sequence
+from typing import Dict
 import torch
 from tape_pytorch.registry import registry
 
 
-@registry.register_callback('save_fluorescence')
-@registry.register_callback('save_stability')
-def save_float_prediction(inputs: Sequence[torch.Tensor], outputs: Sequence[torch.Tensor]):
-    inputs = tuple(t.cpu().numpy() for t in inputs)
-    outputs = tuple(t.cpu().numpy() for t in outputs)
+@registry.register_callback('save_default')
+def save_default(model,
+                 inputs: Dict[str, torch.Tensor],
+                 outputs: Dict[str, torch.Tensor]):
 
-    sequence, mask, target = inputs
-    loss, prediction = outputs
+    model = getattr(model, 'module', model)  # get around DataParallel wrapper
+    target = inputs[model.TARGET_KEY].cpu().numpy()
+    prediction = outputs[model.PREDICTION_KEY].cpu().numpy()
 
-    return target, prediction
+    return {model.TARGET_KEY: target, model.PREDICTION_KEY: prediction}
+
+
+@registry.register_callback('save_embedding')
+def save_embedding(model,
+                   inputs: Dict[str, torch.Tensor],
+                   outputs: Dict[str, torch.Tensor]):
+
+    model = getattr(model, 'module', model)  # get around DataParallel wrapper
+    sequence_embedding = outputs[model.SEQUENCE_EMBEDDING_KEY].cpu().numpy()
+    pooled_embedding = outputs[model.POOLED_EMBEDDING_KEY].cpu().numpy()
+
+    return {model.SEQUENCE_EMBEDDING_KEY: sequence_embedding,
+            model.POOLED_EMBEDDING_KEY: pooled_embedding}

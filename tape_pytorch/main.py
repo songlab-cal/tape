@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Type, Callable
+from typing import Optional, Tuple, Type, Callable, Sequence, List, Dict, Any
 from time import strftime, gmtime
 from timeit import default_timer as timer
 import logging
@@ -8,6 +8,8 @@ from itertools import islice
 from tqdm import tqdm
 import argparse
 import warnings
+from collections import ChainMap
+import pickle as pkl
 
 import torch
 import torch.nn as nn
@@ -218,13 +220,16 @@ def run_valid_epoch(epoch_id: int,
 def run_eval_epoch(eval_loader: DataLoader,
                    model: nn.Module,
                    args: argparse.Namespace,
-                   save_callback: Optional[Callable] = None):
+                   save_callback: Optional[Sequence[Callable]] = None) \
+        -> Dict[str, List[Any]]:
     num_batches = len(eval_loader)
     eval_loss = 0.
     loss_key = getattr(model, 'module', model).LOSS_KEY
 
     torch.set_grad_enabled(False)
     model.eval()
+
+    save_outputs = []
 
     for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches):
         cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
@@ -235,6 +240,11 @@ def run_eval_epoch(eval_loader: DataLoader,
         if args.n_gpu > 1:
             loss = loss.mean()
 
+        if save_callback is not None:
+            to_save = dict(ChainMap(
+                *(callback(model, batch, outputs) for callback in save_callback)))
+            save_outputs.append(to_save)
+
         eval_loss += loss.item()
 
     eval_loss /= num_batches
@@ -242,6 +252,14 @@ def run_eval_epoch(eval_loader: DataLoader,
     print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
 
     logger.info(print_str)
+
+    if len(save_outputs) > 0:
+        keys = save_outputs[0].keys()
+        output_dict = {key: [output[key] for output in save_outputs] for key in keys}
+    else:
+        output_dict = {}
+
+    return output_dict
 
 
 def create_base_parser() -> argparse.ArgumentParser:
@@ -308,6 +326,9 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
     parser.add_argument('outdir', type=str, help='Directory in which to output results')
     parser.add_argument('--batch-size', default=1024, type=int,
                         help='Batch size')
+    parser.add_argument('--save-callback', default=['save_default'],
+                        help='Callbacks to use when saving',
+                        nargs='*')
     return parser
 
 
@@ -418,6 +439,9 @@ def run_eval():
     utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 
+    outdir = Path(args.outdir)
+    outdir.mkdir(exist_ok=True)
+
     logger.info(
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
@@ -430,7 +454,12 @@ def run_eval():
 
     valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
 
-    run_eval_epoch(valid_loader, model, args)
+    print(args.save_callback)
+    save_callbacks = [registry.get_callback(name) for name in args.save_callback]
+    save_outputs = run_eval_epoch(valid_loader, model, args, save_callbacks)
+
+    with (outdir / 'predictions.pkl').open('wb') as f:
+        pkl.dump(save_outputs, f)
 
 
 if __name__ == '__main__':
