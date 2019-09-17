@@ -9,7 +9,7 @@ def _get_sequence_lengths(input_ids: torch.Tensor) -> np.ndarray:
     return sequence_lengths.cpu().numpy()
 
 
-@registry.register_callback('save_default')
+@registry.register_callback('save_predictions')
 def save_default(model,
                  inputs: Dict[str, torch.Tensor],
                  outputs: Dict[str, torch.Tensor]):

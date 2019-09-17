@@ -14,6 +14,7 @@ class Registry:
     collate_fn_name_mapping: Dict[str, Type[Callable]] = {}
     tokenizer_name_mapping: Dict[str, Type] = {}
     callback_name_mapping: Dict[str, Callable] = {}
+    metric_name_mapping: Dict[str, Callable] = {}
 
     @classmethod
     def register_dataset(cls, name: str) -> Callable[[Type[Dataset]], Type[Dataset]]:
@@ -137,6 +138,28 @@ class Registry:
         return wrap
 
     @classmethod
+    def register_metric(cls, name: str) -> Callable[[Callable], Callable]:
+        r"""Register a metric to registry with key 'name'
+
+        Args:
+            name: Key with which the metric will be registered.
+
+        Usage::
+            from tape_pytorch.registry import registry
+
+            @registry.register_metric('mse')
+            def mean_squred_error(inputs, outputs):
+                ...
+        """
+
+        def wrap(fn: Callable) -> Callable:
+            assert callable(fn), "All metrics must be callable"
+            cls.metric_name_mapping[name] = fn
+            return fn
+
+        return wrap
+
+    @classmethod
     def register_tokenizer(cls, name: str) -> Callable[[Type], Type]:
         r"""Register a tokenizer to registry with key 'name'
 
@@ -180,6 +203,10 @@ class Registry:
     @classmethod
     def get_callback(cls, name: str) -> Callable:
         return cls.callback_name_mapping[name]
+
+    @classmethod
+    def get_metric(cls, name: str) -> Callable:
+        return cls.metric_name_mapping[name]
 
     @classmethod
     def get_tokenizer_class(cls, name: str) -> Type:

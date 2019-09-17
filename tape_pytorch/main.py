@@ -326,12 +326,15 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                                      parents=[base_parser])
     parser.add_argument('from_pretrained', type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
-    parser.add_argument('outdir', type=str, help='Directory in which to output results')
     parser.add_argument('--batch-size', default=1024, type=int,
                         help='Batch size')
-    parser.add_argument('--save-callback', default=['save_default'],
+    parser.add_argument('--save-callback', default=['save_predictions'],
                         help=f'Callbacks to use when saving. '
                              f'Choices: {list(registry.callback_name_mapping.keys())}',
+                        nargs='*')
+    parser.add_argument('--metrics', default=[],
+                        help=f'Metrics to run on the result. '
+                             f'Choices: {list(registry.metric_name_mapping.keys())}',
                         nargs='*')
     return parser
 
@@ -443,8 +446,7 @@ def run_eval():
     utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 
-    outdir = Path(args.outdir)
-    outdir.mkdir(exist_ok=True)
+    pretrained_dir = Path(args.from_pretrained)
 
     logger.info(
         f"device: {args.device} "
@@ -459,9 +461,21 @@ def run_eval():
     valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
+
+    if len(args.metrics) > 0 and 'save_predictions' not in args.save_callback:
+        save_callbacks.append(registry.get_callback('save_predictions'))
+    metric_functions = [registry.get_metric(name) for name in args.metrics]
+
     save_outputs = run_eval_epoch(valid_loader, model, args, save_callbacks)
 
-    with (outdir / 'predictions.pkl').open('wb') as f:
+    target_key = getattr(model, 'module', model).TARGET_KEY
+    prediction_key = getattr(model, 'module', model).PREDICTION_KEY
+    metrics = {name: metric(save_outputs[target_key], save_outputs[prediction_key])
+               for name, metric in zip(args.metrics, metric_functions)}
+    save_outputs.update(metrics)
+    logger.info(f'Evaluation Metrics: {metrics}')
+
+    with (pretrained_dir / 'results.pkl').open('wb') as f:
         pkl.dump(save_outputs, f)
 
 
