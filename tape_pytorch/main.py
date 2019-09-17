@@ -4,7 +4,7 @@ from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
-from itertools import islice
+import itertools
 from tqdm import tqdm
 import argparse
 import warnings
@@ -157,7 +157,7 @@ def run_train_epoch(epoch_id: int,
     start_t = timer()
 
     if args.debug:
-        train_loader = islice(train_loader, 10)  # type: ignore
+        train_loader = itertools.islice(train_loader, 10)  # type: ignore
 
     loss_tmp = 0.
     for step, batch in enumerate(train_loader):
@@ -175,7 +175,6 @@ def run_train_epoch(epoch_id: int,
             if trainer.global_step % args.num_log_iter == 0:
                 end_t = timer()
                 time_stamp = strftime("%y-%m-%d %X", gmtime())
-
                 ep = epoch_id + step / float(len(train_loader))
                 print_str = [
                     f"[{time_stamp}]",
@@ -203,7 +202,7 @@ def run_valid_epoch(epoch_id: int,
     trainer.model.eval()
 
     if args.debug:
-        valid_loader = islice(valid_loader, 10)  # type: ignore
+        valid_loader = itertools.islice(valid_loader, 10)  # type: ignore
 
     for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches):
         loss = trainer.forward(batch)
@@ -255,7 +254,9 @@ def run_eval_epoch(eval_loader: DataLoader,
 
     if len(save_outputs) > 0:
         keys = save_outputs[0].keys()
-        output_dict = {key: [output[key] for output in save_outputs] for key in keys}
+        output_dict = {
+            key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
+            for key in keys}
     else:
         output_dict = {}
 
@@ -454,7 +455,6 @@ def run_eval():
 
     valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
 
-    print(args.save_callback)
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
     save_outputs = run_eval_epoch(valid_loader, model, args, save_callbacks)
 

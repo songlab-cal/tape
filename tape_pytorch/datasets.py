@@ -225,8 +225,7 @@ class FluorescenceDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, \
-            float(item['log_fluorescence'][0]), item['protein_length']
+        return token_ids, attention_mask, float(item['log_fluorescence'][0])
 
 
 @registry.register_collate_fn('fluorescence')
@@ -263,8 +262,7 @@ class StabilityDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, \
-            float(item['stability_score'][0]), item['protein_length']
+        return token_ids, attention_mask, float(item['stability_score'][0])
 
 
 @registry.register_collate_fn('stability')
@@ -303,7 +301,7 @@ class RemoteHomologyDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item['fold_label'], item['protein_length']
+        return token_ids, attention_mask, item['fold_label']
 
 
 @registry.register_collate_fn('remote_homology')
@@ -343,7 +341,7 @@ class ProteinnetDataset(TAPEDataset):
         valid_mask = item['valid_mask']
         contact_map = squareform(pdist(item['tertiary'])) < 8.0
 
-        return token_ids, attention_mask, contact_map, valid_mask, item['protein_length']
+        return token_ids, attention_mask, contact_map, valid_mask
 
 
 @registry.register_collate_fn('proteinnet')
@@ -374,7 +372,7 @@ class SecondaryStructureDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item[f'ss{self._num_classes}'], item['protein_length']
+        return token_ids, attention_mask, item[f'ss{self._num_classes}']
 
 
 @registry.register_collate_fn('secondary_structure')

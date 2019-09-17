@@ -119,6 +119,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'masked_lm_labels'
     PREDICTION_KEY = 'prediction_scores'
+    PREDICTION_IS_SEQUENCE = True
 
     def __init__(self, config):
         super().__init__(config)
@@ -168,6 +169,7 @@ class FloatPredictModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'target'
     PREDICTION_KEY = 'float_prediction'
+    PREDICTION_IS_SEQUENCE = False
 
     def __init__(self, config):
         super().__init__(config)
@@ -202,6 +204,7 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'label'
     PREDICTION_KEY = 'class_scores'
+    PREDICTION_IS_SEQUENCE = False
 
     def __init__(self, base_model, config):
         super().__init__()
@@ -234,6 +237,7 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'sequence_labels'
     PREDICTION_KEY = 'sequence_class_scores'
+    PREDICTION_IS_SEQUENCE = True
 
     def __init__(self, config):
         super().__init__()
