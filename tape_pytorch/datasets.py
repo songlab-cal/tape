@@ -197,7 +197,11 @@ class PfamBatch(PaddedBatch):
         clan = torch.LongTensor(clan)
         family = torch.LongTensor(family)
 
-        return input_ids, input_mask, lm_label_ids, clan, family
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'masked_lm_labels': lm_label_ids,
+                'clan_labels': clan,
+                'family_labels': family}
 
 
 @registry.register_dataset('fluorescence')
@@ -232,7 +236,9 @@ class FluorescenceBatch(PaddedBatch):
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
         fluorescence_target = torch.FloatTensor(fluorescence_target)
 
-        return input_ids, input_mask, fluorescence_target
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'target': fluorescence_target}
 
 
 @registry.register_dataset('stability')
@@ -267,7 +273,9 @@ class StabilityBatch(PaddedBatch):
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
         stability_score = torch.FloatTensor(stability_score)
 
-        return input_ids, input_mask, stability_score
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'target': stability_score}
 
 
 @registry.register_dataset('remote_homology')
@@ -304,7 +312,9 @@ class RemoteHomologyBatch(PaddedBatch):
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
         fold_label = torch.LongTensor(fold_label)
 
-        return input_ids, input_mask, fold_label
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'label': fold_label}
 
 
 @registry.register_dataset('proteinnet')
@@ -373,4 +383,6 @@ class SecondaryStructureBatch(PaddedBatch):
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
         ss_label = torch.LongTensor(ss_label)
 
-        return input_ids, input_mask, ss_label
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask,
+                'sequence_labels': ss_label}

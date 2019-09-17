@@ -7,6 +7,7 @@ import json
 from itertools import islice
 from tqdm import tqdm
 import argparse
+import warnings
 
 import torch
 import torch.nn as nn
@@ -31,6 +32,8 @@ from tape_pytorch.datasets import TAPEDataset
 
 
 logger = logging.getLogger(__name__)
+warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
+    'ignore', message='Was asked to gather along dimension 0', module='torch.nn.parallel')
 
 
 def setup_model(model_type: str,
@@ -109,7 +112,7 @@ def get_effective_num_gpus(args: argparse.Namespace) -> int:
 
 def get_effective_batch_size(args: argparse.Namespace) -> int:
     batch_size = float(args.batch_size)
-    batch_size /= args.gradient_accumulation_steps
+    batch_size /= getattr(args, 'gradient_accumulation_steps', 1)
     batch_size /= get_effective_num_gpus(args)
     return int(batch_size)
 
@@ -200,7 +203,7 @@ def run_valid_epoch(epoch_id: int,
     if args.debug:
         valid_loader = islice(valid_loader, 10)  # type: ignore
 
-    for step, batch in tqdm(enumerate(valid_loader), desc='Evaluating split val'):
+    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches):
         loss = trainer.forward(batch)
         eval_loss += loss.item()
 
@@ -215,18 +218,19 @@ def run_valid_epoch(epoch_id: int,
 def run_eval_epoch(eval_loader: DataLoader,
                    model: nn.Module,
                    args: argparse.Namespace,
-                   save_callback: Optional[Callable]):
+                   save_callback: Optional[Callable] = None):
     num_batches = len(eval_loader)
     eval_loss = 0.
+    loss_key = getattr(model, 'module', model).LOSS_KEY
 
     torch.set_grad_enabled(False)
     model.eval()
 
-    for step, batch in tqdm(enumerate(eval_loader), desc='Evaluating split val'):
-        cuda_batch = tuple(
-            t.cuda(device=args.device, non_blocking=True) for t in batch)
-        outputs = model(*cuda_batch)
-        loss = outputs[0]
+    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches):
+        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
+                      for name, tensor in batch.items()}
+        outputs = model(**cuda_batch)
+        loss = outputs[loss_key]
 
         if args.n_gpu > 1:
             loss = loss.mean()
@@ -273,6 +277,8 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                                      parents=[base_parser])
     parser.add_argument('--learning-rate', default=1e-4, type=float,
                         help='Learning rate')
+    parser.add_argument('--batch-size', default=1024, type=int,
+                        help='Batch size')
     parser.add_argument('--num-train-epochs', default=10, type=int,
                         help='Number of training epochs')
     parser.add_argument('--num-log-iter', default=20, type=int,
@@ -400,13 +406,15 @@ def run_train():
 
 def run_eval():
     base_parser = create_base_parser()
-    args = base_parser.parse_args()
+    parser = create_eval_parser(base_parser)
+    args = parser.parse_args()
 
     if args.from_pretrained is None:
         raise ValueError("Must specify pretrained model")
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
+    args = setup_distributed(args)
     utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 

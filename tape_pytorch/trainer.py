@@ -1,3 +1,4 @@
+from typing import Dict
 import logging
 import argparse
 
@@ -26,12 +27,13 @@ class Trainer:
         self.scheduler = scheduler
         self.args = args
         self._global_step = 0
+        self._loss_key = getattr(model, 'module', model).LOSS_KEY
 
-    def forward(self, batch) -> torch.Tensor:
-        cuda_batch = tuple(
-            t.cuda(device=self.args.device, non_blocking=True) for t in batch)
-        outputs = self.model(*cuda_batch)
-        loss = outputs[0]
+    def forward(self, batch: Dict[str, torch.Tensor]) -> torch.Tensor:
+        cuda_batch = {name: tensor.cuda(device=self.args.device, non_blocking=True)
+                      for name, tensor in batch.items()}
+        outputs = self.model(**cuda_batch)
+        loss = outputs[self._loss_key]
 
         if self.args.n_gpu > 1:
             loss = loss.mean()

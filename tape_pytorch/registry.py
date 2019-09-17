@@ -13,6 +13,7 @@ class Registry:
     task_model_name_mapping: Dict[str, Type] = {}
     collate_fn_name_mapping: Dict[str, Type[Callable]] = {}
     tokenizer_name_mapping: Dict[str, Type] = {}
+    callback_name_mapping: Dict[str, Callable] = {}
 
     @classmethod
     def register_dataset(cls, name: str) -> Callable[[Type[Dataset]], Type[Dataset]]:
@@ -25,7 +26,7 @@ class Registry:
             from tape_pytorch.registry import registry
             from torch.utils.data import Dataset
 
-            @registry.register('fluorescence')
+            @registry.register_dataset('fluorescence')
             class FluorescenceDataset(Dataset):
                 ...
         """
@@ -49,7 +50,7 @@ class Registry:
             from tape_pytorch.registry import registry
             import torch.nn as nn
 
-            @registry.register('lstm')
+            @registry.register_model('lstm')
             class LSTM(nn.Module):
                 ...
         """
@@ -73,8 +74,8 @@ class Registry:
             from tape_pytorch.registry import registry
             import torch.nn as nn
 
-            @registry.register('fluorescence')
-            @registry.register('stability')
+            @registry.register_task_model('fluorescence')
+            @registry.register_task_model('stability')
             class SequenceToFloatModel(nn.Module):
                 ...
         """
@@ -99,7 +100,7 @@ class Registry:
             from tape_pytorch.registry import registry
             from tape_pytorch.datasets import PaddedBatch
 
-            @registry.register('pfam')
+            @registry.register_collate_fn('pfam')
             class PfamBatch(PaddedBatch):
                 ...
         """
@@ -110,6 +111,28 @@ class Registry:
                 "All collate_fn must inherit tape_pytorch.datasets.PaddedBatch"
             cls.collate_fn_name_mapping[name] = fn_cls
             return fn_cls
+
+        return wrap
+
+    @classmethod
+    def register_callback(cls, name: str) -> Callable[[Callable], Callable]:
+        r"""Register a callback to registry with key 'name'
+
+        Args:
+            name: Key with which the callback will be registered.
+
+        Usage::
+            from tape_pytorch.registry import registry
+
+            @registry.register_callback('save_fluorescence')
+            def save_float_prediction(inputs, outputs):
+                ...
+        """
+
+        def wrap(fn: Callable) -> Callable:
+            assert callable(fn), "All callbacks must be callable"
+            cls.callback_name_mapping[name] = fn
+            return fn
 
         return wrap
 
@@ -153,6 +176,10 @@ class Registry:
     @classmethod
     def get_collate_fn_class(cls, name: str) -> Type[Callable]:
         return cls.collate_fn_name_mapping[name]
+
+    @classmethod
+    def get_callback(cls, name: str) -> Callable:
+        return cls.callback_name_mapping[name]
 
     @classmethod
     def get_tokenizer_class(cls, name: str) -> Type:

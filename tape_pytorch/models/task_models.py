@@ -1,5 +1,6 @@
-from typing import Optional
+from typing import Optional, Sequence, Dict
 import json
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from pytorch_transformers.modeling_bert import BertOnlyMLMHead
@@ -72,8 +73,32 @@ class TAPEConfig(PretrainedConfig):
 
 class TAPEPreTrainedModel(PreTrainedModel):
 
+    # Output keys
+    SEQUENCE_EMBEDDING_KEY = 'sequence_embedding'
+    POOLED_EMBEDDING_KEY = 'pooled_embedding'
+    HIDDEN_STATES_KEY = 'hidden_states'
+    ATTENTIONS_KEY = 'attentions'
+    LOSS_KEY = 'loss'
+
     config_class = TAPEConfig
     base_model_prefix = "base_model"
+
+    def _convert_outputs_to_dictionary(self, outputs: Sequence[torch.Tensor]) \
+            -> Dict[str, torch.Tensor]:
+        cls = self.__class__
+        dict_outputs = {}
+        dict_outputs[cls.SEQUENCE_EMBEDDING_KEY] = outputs[0]
+        dict_outputs[cls.POOLED_EMBEDDING_KEY] = outputs[1]
+
+        if self.config.output_hidden_states and self.config.output_attentions:
+            dict_outputs[cls.HIDDEN_STATES_KEY] = outputs[2]
+            dict_outputs[cls.ATTENTIONS_KEY] = outputs[3]
+        elif self.config.output_hidden_states:
+            dict_outputs[cls.HIDDEN_STATES_KEY] = outputs[2]
+        elif self.config.output_attentions:
+            dict_outputs[cls.ATTENTIONS_KEY] = outputs[2]
+
+        return dict_outputs
 
     def init_weights(self, module):
         """ Initialize the weights """
@@ -92,10 +117,12 @@ class TAPEPreTrainedModel(PreTrainedModel):
 @registry.register_task_model('pfam')
 class MaskedLMModel(TAPEPreTrainedModel):
 
+    LM_PREDICTIONS_KEY = 'prediction_scores'
+
     def __init__(self, config):
         super().__init__(config)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
-        self.cls = BertOnlyMLMHead(config)
+        self.classify = BertOnlyMLMHead(config)
 
         self.apply(self.init_weights)
         self.tie_weights()
@@ -104,7 +131,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
         """ Make sure we are sharing the input and output embeddings.
             Export to TorchScript can't handle parameter sharing so we are cloning them instead.
         """
-        self._tie_or_clone_weights(self.cls.predictions.decoder,
+        self._tie_or_clone_weights(self.classify.predictions.decoder,
                                    self.base_model.embeddings.word_embeddings)
 
     def forward(self,
@@ -114,12 +141,13 @@ class MaskedLMModel(TAPEPreTrainedModel):
                 clan_labels=None,
                 family_labels=None):
 
-        outputs = self.base_model(input_ids, position_ids=None, token_type_ids=None,
-                                  attention_mask=attention_mask, head_mask=None)
+        cls = self.__class__
+        outputs = self._convert_outputs_to_dictionary(
+            self.base_model(input_ids, position_ids=None, token_type_ids=None,
+                            attention_mask=attention_mask, head_mask=None))
+        prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
 
-        sequence_output = outputs[0]
-        prediction_scores = self.cls(sequence_output)
-
+        outputs[cls.LM_PREDICTIONS_KEY] = prediction_scores
         # Add hidden states and attention if they are here
         outputs = (prediction_scores,) + outputs[2:]
         if masked_lm_labels is not None:
@@ -128,14 +156,16 @@ class MaskedLMModel(TAPEPreTrainedModel):
                 prediction_scores.view(-1, self.config.vocab_size),
                 masked_lm_labels.view(-1),
                 ignore_index=-1)
-            outputs = (masked_lm_loss,) + outputs
+            outputs[cls.LOSS_KEY] = masked_lm_loss
 
-        return outputs  # (masked_lm_loss), prediction_scores, (hidden_states), (attentions)
+        return outputs
 
 
 @registry.register_task_model('fluorescence')
 @registry.register_task_model('stability')
 class FloatPredictModel(TAPEPreTrainedModel):
+
+    PREDICTION_KEY = 'float_prediction'
 
     def __init__(self, config):
         super().__init__(config)
@@ -147,20 +177,19 @@ class FloatPredictModel(TAPEPreTrainedModel):
     def forward(self,
                 input_ids,
                 attention_mask=None,
-                label=None):
+                target=None):
+        cls = self.__class__
         # sequence_output, pooled_output, (hidden_states), (attention)
-        outputs = self.base_model(
-            input_ids, attention_mask=attention_mask)
-        pooled_output = outputs[1]
-        float_prediction = self.predict(pooled_output)
+        outputs = self._convert_outputs_to_dictionary(
+            self.base_model(input_ids, attention_mask=attention_mask))
+        float_prediction = self.predict(outputs[cls.POOLED_EMBEDDING_KEY])
 
-        # Add hidden states and attention if they are here
-        outputs = (float_prediction,) + outputs[2:]
+        outputs[cls.PREDICTION_KEY] = float_prediction
 
-        if label is not None:
-            label = label.reshape_as(float_prediction)
-            loss = F.mse_loss(float_prediction, label)
-            outputs = (loss,) + outputs
+        if target is not None:
+            target = target.reshape_as(float_prediction)
+            loss = F.mse_loss(float_prediction, target)
+            outputs[cls.LOSS_KEY] = loss
 
         # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
         return outputs
@@ -168,6 +197,8 @@ class FloatPredictModel(TAPEPreTrainedModel):
 
 @registry.register_task_model('remote_homology')
 class SequenceClassificationModel(TAPEPreTrainedModel):
+
+    PREDICTION_KEY = 'class_scores'
 
     def __init__(self, base_model, config):
         super().__init__()
@@ -181,25 +212,24 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
                 input_ids,
                 attention_mask=None,
                 label=None):
-
+        cls = self.__class__
         # sequence_output, pooled_output, (hidden_states), (attention)
-        outputs = self.base_model(
-            input_ids, attention_mask=attention_mask)
-        pooled_output = outputs[1]
-        class_scores = self.predict(pooled_output)
-
-        # Add hidden states and attention if they are here
-        outputs = (class_scores,) + outputs[2:]
+        outputs = self._convert_outputs_to_dictionary(
+            self.base_model(input_ids, attention_mask=attention_mask))
+        class_scores = self.predict(outputs[cls.POOLED_EMBEDDING_KEY])
+        outputs[cls.PREDICTION_KEY] = class_scores
 
         if label is not None:
             loss = F.cross_entropy(class_scores, label)
-            outputs = (loss,) + outputs
+            outputs[cls.LOSS_KEY] = loss
 
         return outputs  # (class_prediction_loss), class_scores, (hidden_states), (attentions)
 
 
 @registry.register_task_model('secondary_structure')
 class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
+
+    PREDICTION_KEY = 'sequence_class_scores'
 
     def __init__(self, config):
         super().__init__()
@@ -212,21 +242,18 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
     def forward(self,
                 input_ids,
                 attention_mask=None,
-                label=None):
+                sequence_labels=None):
+        cls = self.__class__
         # sequence_output, pooled_output, (hidden_states), (attention)
-        outputs = self.base_model(
-            input_ids, attention_mask=attention_mask)
-        sequence_output = outputs[0]
-        sequence_class_scores = self.predict(sequence_output)
+        outputs = self._convert_outputs_to_dictionary(
+            self.base_model(input_ids, attention_mask=attention_mask))
+        sequence_class_scores = self.predict(outputs[cls.SEQUENCE_EMBEDDING_KEY])
 
-        # Add hidden states and attention if they are here
-        outputs = (sequence_class_scores,) + outputs[2:]
-
-        if label is not None:
+        if sequence_labels is not None:
             loss = F.cross_entropy(
                 sequence_class_scores.view(-1, sequence_class_scores.size(2)),
-                label.view(-1))
-            outputs = (loss,) + outputs
+                sequence_labels.view(-1))
+            outputs[cls.LOSS_KEY] = loss
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
         return outputs
