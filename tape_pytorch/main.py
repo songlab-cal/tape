@@ -513,9 +513,11 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> None:
 
 
 def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
-    import sys
+    """Runs distributed training via multiprocessing. Mostly ripped from
+    pytorch's torch.distributed.launch, modified to be easy to use for
+    tape.
+    """
     from multiprocessing import Process, ProcessError
-    # import subprocess
 
     if args is None:
         base_parser = create_base_parser()
@@ -550,19 +552,9 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
         current_env["RANK"] = str(dist_rank)
         current_env["LOCAL_RANK"] = str(local_rank)
 
-        # spawn the processes
-        # if args.use_env:
-            # cmd = [sys.executable, "-u",
-                   # args.training_script] + args.training_script_args
-        # else:
-            # cmd = [sys.executable,
-                   # "-u",
-                   # args.training_script,
-                   # "--local_rank={}".format(local_rank)] + args.training_script_args
         args.local_rank = local_rank
         process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
         process.start()
-        # process = subprocess.Popen(cmd, env=current_env)
         processes.append(process)
 
     for process in processes:
