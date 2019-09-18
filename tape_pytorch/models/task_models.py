@@ -150,8 +150,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
         prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
 
         outputs[cls.PREDICTION_KEY] = prediction_scores
-        # Add hidden states and attention if they are here
-        outputs = (prediction_scores,) + outputs[2:]
+
         if masked_lm_labels is not None:
             # loss_fct = CrossEntropyLoss(ignore_index=-1)
             masked_lm_loss = F.cross_entropy(
