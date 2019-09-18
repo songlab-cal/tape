@@ -153,8 +153,7 @@ class PfamDataset(TAPEDataset):
         masked_token_ids = np.array(
             self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
 
-        return masked_token_ids, attention_mask, labels, \
-            item['protein_length'], item['clan'], item['family']
+        return masked_token_ids, attention_mask, labels, item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
         masked_tokens = copy(tokens)
