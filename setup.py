@@ -21,7 +21,8 @@ setup(
     entry_points={
         'console_scripts': [
             'tape-train = tape_pytorch.main:run_train',
-            'tape-eval = tape_pytorch.main:run_eval'
+            'tape-train-distributed = tape_pytorch.main:run_train_distributed',
+            'tape-eval = tape_pytorch.main:run_eval',
         ]
     },
 )

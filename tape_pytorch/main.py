@@ -1,4 +1,5 @@
 from typing import Optional, Tuple, Type, Callable, Sequence, List, Dict, Any
+import os
 from time import strftime, gmtime
 from timeit import default_timer as timer
 import logging
@@ -341,11 +342,40 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
     return parser
 
 
-def run_train():
-    base_parser = create_base_parser()
-    train_parser = create_train_parser(base_parser)
+def create_distributed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(add_help=False, parents=[base_parser])
+    # Optional arguments for the launch helper
+    parser.add_argument("--nnodes", type=int, default=1,
+                        help="The number of nodes to use for distributed "
+                             "training")
+    parser.add_argument("--node_rank", type=int, default=0,
+                        help="The rank of the node for multi-node distributed "
+                             "training")
+    parser.add_argument("--nproc_per_node", type=int, default=1,
+                        help="The number of processes to launch on each node, "
+                             "for GPU training, this is recommended to be set "
+                             "to the number of GPUs in your system so that "
+                             "each process can be bound to a single GPU.")
+    parser.add_argument("--master_addr", default="127.0.0.1", type=str,
+                        help="Master node (rank 0)'s address, should be either "
+                             "the IP address or the hostname of node 0, for "
+                             "single node multi-proc training, the "
+                             "--master_addr can simply be 127.0.0.1")
+    parser.add_argument("--master_port", default=29500, type=int,
+                        help="Master node (rank 0)'s free port that needs to "
+                             "be used for communciation during distributed "
+                             "training")
+    return parser
 
-    args = train_parser.parse_args()
+
+def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
+    if env is not None:
+        os.environ = env
+
+    if args is None:
+        base_parser = create_base_parser()
+        train_parser = create_train_parser(base_parser)
+        args = train_parser.parse_args()
 
     if args.gradient_accumulation_steps < 1:
         raise ValueError(
@@ -434,10 +464,11 @@ def run_train():
             logger.info(f"Saving model checkpoint to {output_model_dir}")
 
 
-def run_eval():
-    base_parser = create_base_parser()
-    parser = create_eval_parser(base_parser)
-    args = parser.parse_args()
+def run_eval(args: Optional[argparse.Namespace] = None) -> None:
+    if args is None:
+        base_parser = create_base_parser()
+        parser = create_eval_parser(base_parser)
+        args = parser.parse_args()
 
     if args.from_pretrained is None:
         raise ValueError("Must specify pretrained model")
@@ -479,6 +510,65 @@ def run_eval():
 
     with (pretrained_dir / 'results.pkl').open('wb') as f:
         pkl.dump(save_outputs, f)
+
+
+def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
+    import sys
+    from multiprocessing import Process, ProcessError
+    # import subprocess
+
+    if args is None:
+        base_parser = create_base_parser()
+        distributed_parser = create_distributed_parser(base_parser)
+        distributed_train_parser = create_train_parser(distributed_parser)
+        args = distributed_train_parser.parse_args()
+
+    # world size in terms of number of processes
+    dist_world_size = args.nproc_per_node * args.nnodes
+
+    # set PyTorch distributed related environmental variables
+    current_env = os.environ.copy()
+    current_env["MASTER_ADDR"] = args.master_addr
+    current_env["MASTER_PORT"] = str(args.master_port)
+    current_env["WORLD_SIZE"] = str(dist_world_size)
+
+    processes = []
+
+    if 'OMP_NUM_THREADS' not in os.environ and args.nproc_per_node > 1:
+        current_env["OMP_NUM_THREADS"] = str(1)
+        print("*****************************************\n"
+              "Setting OMP_NUM_THREADS environment variable for each process "
+              "to be {} in default, to avoid your system being overloaded, "
+              "please further tune the variable for optimal performance in "
+              "your application as needed. \n"
+              "*****************************************".format(
+                  current_env["OMP_NUM_THREADS"]))
+
+    for local_rank in range(0, args.nproc_per_node):
+        # each process's rank
+        dist_rank = args.nproc_per_node * args.node_rank + local_rank
+        current_env["RANK"] = str(dist_rank)
+        current_env["LOCAL_RANK"] = str(local_rank)
+
+        # spawn the processes
+        # if args.use_env:
+            # cmd = [sys.executable, "-u",
+                   # args.training_script] + args.training_script_args
+        # else:
+            # cmd = [sys.executable,
+                   # "-u",
+                   # args.training_script,
+                   # "--local_rank={}".format(local_rank)] + args.training_script_args
+        args.local_rank = local_rank
+        process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
+        process.start()
+        # process = subprocess.Popen(cmd, env=current_env)
+        processes.append(process)
+
+    for process in processes:
+        process.join()
+        if process.exitcode != 0:
+            raise ProcessError(f"Process failed with exitcode {process.exitcode}")
 
 
 if __name__ == '__main__':
