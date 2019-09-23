@@ -18,8 +18,66 @@ from tape_pytorch.registry import registry
 logger = logging.getLogger(__name__)
 
 
+class FastaDataset(Dataset):
+    """Creates a dataset from a fasta file.
+    Args:
+        data_file (Union[str, Path]): Path to fasta file.
+        in_memory (bool, optional): Whether to load the full dataset into memory.
+            Default: False.
+    """
+
+    def __init__(self,
+                 data_file: Union[str, Path],
+                 in_memory: bool = False):
+
+        from Bio import SeqIO
+        data_file = Path(data_file)
+        if not data_file.exists():
+            raise FileNotFoundError(data_file)
+
+        if in_memory:
+            cache = list(SeqIO.parse(str(data_file)))
+            num_examples = len(cache)
+            self._cache = cache
+        else:
+            records = SeqIO.index(str(data_file), 'fasta')
+            num_examples = len(records)
+
+            if num_examples < 10000:
+                logger.info("Reading full fasta file into memory because number of examples "
+                            "is very low. This loads data approximately 20x faster.")
+                in_memory = True
+                cache = list(records)
+                self._cache = cache
+            else:
+                self._records = records
+                self._keys = list(records.keys())
+
+        self._in_memory = in_memory
+        self._num_examples = num_examples
+
+    def __len__(self) -> int:
+        return self._num_examples
+
+    def __getitem__(self, index: int):
+        if not 0 <= index < self._num_examples:
+            raise IndexError(index)
+
+        if self._in_memory and self._cache[index] is not None:
+            item = self._cache[index]
+        else:
+            key = self._keys[index]
+            record = self._records[key]
+            item = {'id': record.id,
+                    'primary': str(record.seq),
+                    'protein_length': len(record.seq)}
+            if self._in_memory:
+                self._cache[index] = item
+        return item
+
+
 class LMDBDataset(Dataset):
-    """Creates the Pfam Dataset
+    """Creates a dataset from an lmdb file.
     Args:
         data_file (Union[str, Path]): Path to lmdb file.
         in_memory (bool, optional): Whether to load the full dataset into memory.
