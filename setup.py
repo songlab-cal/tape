@@ -23,6 +23,7 @@ setup(
             'tape-train = tape_pytorch.main:run_train',
             'tape-train-distributed = tape_pytorch.main:run_train_distributed',
             'tape-eval = tape_pytorch.main:run_eval',
+            'tape-embed = tape_pytorch.main:run_embed',
         ]
     },
 )

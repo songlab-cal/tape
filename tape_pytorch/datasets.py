@@ -47,7 +47,7 @@ class FastaDataset(Dataset):
                 logger.info("Reading full fasta file into memory because number of examples "
                             "is very low. This loads data approximately 20x faster.")
                 in_memory = True
-                cache = list(records)
+                cache = list(records.values())
                 self._cache = cache
             else:
                 self._records = records
@@ -64,15 +64,16 @@ class FastaDataset(Dataset):
             raise IndexError(index)
 
         if self._in_memory and self._cache[index] is not None:
-            item = self._cache[index]
+            record = self._cache[index]
         else:
             key = self._keys[index]
             record = self._records[key]
-            item = {'id': record.id,
-                    'primary': str(record.seq),
-                    'protein_length': len(record.seq)}
             if self._in_memory:
-                self._cache[index] = item
+                self._cache[index] = record
+
+        item = {'id': record.id,
+                'primary': str(record.seq),
+                'protein_length': len(record.seq)}
         return item
 
 
@@ -141,7 +142,8 @@ class PaddedBatch(ABC):
         return torch.from_numpy(array)
 
 
-class TAPEDataset(LMDBDataset):
+@registry.register_dataset('embed')
+class TAPEDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
@@ -149,7 +151,7 @@ class TAPEDataset(LMDBDataset):
                  tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
-
+        super().__init__()
         data_path = Path(data_path)
 
         if isinstance(tokenizer, str):
@@ -160,11 +162,24 @@ class TAPEDataset(LMDBDataset):
         assert isinstance(tokenizer, tokenizers.TAPETokenizer)
         self.tokenizer = tokenizer
         self._convert_tokens_to_ids = convert_tokens_to_ids
-        super().__init__(data_path / data_file, in_memory)
+
+        data_file = Path(data_file)
+        if not data_file.exists():
+            data_file = data_path / data_file
+            if not data_file.exists():
+                raise FileNotFoundError(data_file)
+
+        dataset_type = {
+            '.lmdb': LMDBDataset,
+            '.fasta': FastaDataset}
+        self._dataset = dataset_type[data_file.suffix](data_file, in_memory)
+
+    def __len__(self) -> int:
+        return len(self._dataset)
 
     def __getitem__(self, index: int) -> \
             Tuple[Dict[str, Any], Union[List[int], List[str]], List[int]]:
-        item = super().__getitem__(index)
+        item = self._dataset[index]
         tokens = self.tokenizer.tokenize(item['primary'])
         tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
 
@@ -174,6 +189,18 @@ class TAPEDataset(LMDBDataset):
         attention_mask = np.ones([len(tokens)], dtype=np.int64)
 
         return item, tokens, attention_mask
+
+
+@registry.register_collate_fn('embed')
+class EmbedBatch(PaddedBatch):
+
+    def __call__(self, batch):
+        _, input_ids, input_mask = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+
+        return {'input_ids': input_ids,
+                'attention_mask': input_mask}
 
 
 @registry.register_dataset('pfam')

@@ -114,6 +114,25 @@ class TAPEPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
 
 
+@registry.register_task_model('embed')
+class EmbedModel(TAPEPreTrainedModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+        self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
+
+        self.apply(self.init_weights)
+
+    def forward(self,
+                input_ids,
+                attention_mask=None,
+                target=None):
+        # sequence_output, pooled_output, (hidden_states), (attention)
+        outputs = self._convert_outputs_to_dictionary(
+            self.base_model(input_ids, attention_mask=attention_mask))
+        return outputs
+
+
 @registry.register_task_model('pfam')
 class MaskedLMModel(TAPEPreTrainedModel):
 

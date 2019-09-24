@@ -269,8 +269,6 @@ def run_eval_epoch(eval_loader: DataLoader,
 def create_base_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Parent parser for tape functions',
                                      add_help=False)
-    parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
-                        help='TAPE Task to train/eval on')
     parser.add_argument('model_type', choices=list(registry.model_name_mapping.keys()),
                         help='Base model class to run')
     parser.add_argument('--model-config-file', default=None, type=utils.check_is_file,
@@ -297,6 +295,8 @@ def create_base_parser() -> argparse.ArgumentParser:
 def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Run Training on the TAPE datasets',
                                      parents=[base_parser])
+    parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
+                        help='TAPE Task to train/eval on')
     parser.add_argument('--learning-rate', default=1e-4, type=float,
                         help='Learning rate')
     parser.add_argument('--batch-size', default=1024, type=int,
@@ -325,6 +325,8 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
 def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Run Eval on the TAPE Datasets',
                                      parents=[base_parser])
+    parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
+                        help='TAPE Task to train/eval on')
     parser.add_argument('from_pretrained', type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch-size', default=1024, type=int,
@@ -339,6 +341,21 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                         nargs='*')
     parser.add_argument('--split', default='test', type=str,
                         help='Which split to run on')
+    return parser
+
+
+def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description='Embed a set of proteins wiht a pretrained model',
+                                     parents=[base_parser])
+    parser.add_argument('datafile', type=str,
+                        help='File containing set of proteins to embed')
+    parser.add_argument('outfile', type=str,
+                        help='Name of output file')
+    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+                        help='Directory containing config and pretrained model weights')
+    parser.add_argument('--batch-size', default=1024, type=int,
+                        help='Batch size')
+    parser.set_defaults(task='embed')
     return parser
 
 
@@ -512,6 +529,59 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> None:
         pkl.dump(save_outputs, f)
 
 
+def run_embed(args: Optional[argparse.Namespace] = None) -> None:
+    if args is None:
+        base_parser = create_base_parser()
+        parser = create_embed_parser(base_parser)
+        args = parser.parse_args()
+
+    from tape_pytorch.datasets import TAPEDataset
+
+    if args.from_pretrained is None:
+        raise ValueError("Must specify pretrained model")
+    if args.local_rank != -1:
+        raise ValueError("TAPE does not support distributed embed pass")
+
+    args = setup_distributed(args)
+    utils.setup_logging(args.local_rank, save_path=None)
+    utils.set_random_seeds(args.seed, args.n_gpu)
+
+    logger.info(
+        f"device: {args.device} "
+        f"n_gpu: {args.n_gpu}")
+
+    model = setup_model(
+        args.model_type, args.task, args.from_pretrained, args.model_config_file)
+
+    if args.n_gpu > 1:
+        model = nn.DataParallel(model)
+
+    dataset, loader = setup_dataset_and_loader(args, args.datafile)
+
+    torch.set_grad_enabled(False)
+    model.eval()
+
+    save_outputs = []
+    save_callback = registry.get_callback('save_embedding')
+
+    for batch in tqdm(loader, desc='Embedding sequences', total=len(loader),
+                      disable=not args.is_master):
+        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
+                      for name, tensor in batch.items()}
+        outputs = model(**cuda_batch)
+
+        to_save = save_callback(model, batch, outputs)
+        save_outputs.append(to_save)
+
+    keys = save_outputs[0].keys()
+    output_dict = {
+        key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
+        for key in keys}
+
+    with (Path(args.outfile).with_suffix('.pkl')).open('wb') as f:
+        pkl.dump(output_dict, f)
+
+
 def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
     """Runs distributed training via multiprocessing. Mostly ripped from
     pytorch's torch.distributed.launch, modified to be easy to use for
@@ -564,4 +634,5 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
 
 
 if __name__ == '__main__':
-    run_train()
+    # run_train()
+    run_embed()
