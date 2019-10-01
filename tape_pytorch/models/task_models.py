@@ -258,7 +258,9 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
     PREDICTION_IS_SEQUENCE = True
 
     def __init__(self, config):
-        super().__init__()
+        super().__init__(config)
+        if config.num_classes is None:
+            raise ValueError("Must pass value for num_classes")
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(
             config.hidden_size, config.hidden_size * 2, config.num_classes, 0.5)
@@ -278,7 +280,8 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
         if sequence_labels is not None:
             loss = F.cross_entropy(
                 sequence_class_scores.view(-1, sequence_class_scores.size(2)),
-                sequence_labels.view(-1))
+                sequence_labels.view(-1),
+                ignore_index=-1)
             outputs[cls.LOSS_KEY] = loss
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)

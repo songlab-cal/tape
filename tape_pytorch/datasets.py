@@ -466,7 +466,7 @@ class SecondaryStructureBatch(PaddedBatch):
         input_ids, input_mask, ss_label = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
-        ss_label = torch.LongTensor(ss_label)
+        ss_label = self._pad(ss_label, -1)
 
         return {'input_ids': input_ids,
                 'attention_mask': input_mask,
