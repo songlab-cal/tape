@@ -62,7 +62,7 @@ class TAPEConfig(PretrainedConfig):
         if getattr(self, 'num_classes', None) is None:
             self.num_classes = num_classes
         else:
-            assert self.num_classes == num_classes
+            assert num_classes is None or self.num_classes == num_classes
 
     @classmethod
     def from_dict(cls, json_object):
@@ -270,12 +270,35 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
     def forward(self,
                 input_ids,
                 attention_mask=None,
-                sequence_labels=None):
+                sequence_labels=None,
+                token_lengths=None):
         cls = self.__class__
         # sequence_output, pooled_output, (hidden_states), (attention)
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
-        sequence_class_scores = self.predict(outputs[cls.SEQUENCE_EMBEDDING_KEY])
+
+        sequence_embedding = outputs[cls.SEQUENCE_EMBEDDING_KEY]
+        if token_lengths is not None:
+            new_sequences = []
+            for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
+                expanded_seq = []
+                for embed, n in zip(seq_embed, seq_tok_lengths):
+                    if n == 0:
+                        continue
+                    embed = embed.repeat(n).view(n, self.config.hidden_size)
+                    expanded_seq.append(embed)
+                expanded_seq = torch.cat(expanded_seq, 0)
+                new_sequences.append(expanded_seq)
+
+            max_len = max(seq.size(0) for seq in new_sequences)
+            new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
+                             for embed in new_sequences]
+
+            sequence_embedding = torch.stack(new_sequences, 0)
+            sequence_embedding = sequence_embedding[:, :sequence_labels.size(1)]
+
+        sequence_class_scores = self.predict(sequence_embedding)
+        outputs[cls.PREDICTION_KEY] = sequence_class_scores
 
         if sequence_labels is not None:
             loss = F.cross_entropy(

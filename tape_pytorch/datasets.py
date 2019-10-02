@@ -450,24 +450,45 @@ class SecondaryStructureDataset(TAPEDataset):
 
         data_path = Path(data_path)
         data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
-        super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        super().__init__(
+            data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
 
         self._num_classes = num_classes
 
     def __getitem__(self, index: int):
-        item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item[f'ss{self._num_classes}']
+        item, tokens, attention_mask = super().__getitem__(index)
+
+        # pad with -1s because of cls/sep tokens
+        labels = np.asarray(item[f'ss{self._num_classes}'], np.int64)
+        labels = np.pad(labels, (1, 1), 'constant', constant_values=-1)
+
+        if isinstance(self.tokenizer, tokenizers.BPETokenizer):
+            # ignore the cls/sep tokens
+            token_lengths = np.array([len(str(token)) for token in tokens[1:-1]])
+            token_lengths[0] -= 1  # first length has a start token pre-pended
+            token_lengths = np.pad(token_lengths, (1, 1), 'constant', constant_values=1)
+        else:
+            token_lengths = None
+
+        token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens))  # type: ignore
+        return token_ids, attention_mask, labels, token_lengths
 
 
 @registry.register_collate_fn('secondary_structure')
 class SecondaryStructureBatch(PaddedBatch):
 
     def __call__(self, batch):
-        input_ids, input_mask, ss_label = tuple(zip(*batch))
+        input_ids, input_mask, ss_label, token_lengths = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
         ss_label = self._pad(ss_label, -1)
 
-        return {'input_ids': input_ids,
-                'attention_mask': input_mask,
-                'sequence_labels': ss_label}
+        batch = {'input_ids': input_ids,
+                 'attention_mask': input_mask,
+                 'sequence_labels': ss_label}
+
+        if not any(tk is None for tk in token_lengths):
+            token_lengths = self._pad(token_lengths, 1)
+            batch['token_lengths'] = token_lengths
+
+        return batch

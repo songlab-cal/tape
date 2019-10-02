@@ -16,8 +16,13 @@ def save_default(model,
 
     model = getattr(model, 'module', model)  # get around DataParallel wrapper
 
-    target = inputs[model.TARGET_KEY].cpu().numpy().squeeze()
-    prediction = outputs[model.PREDICTION_KEY].cpu().numpy().squeeze()
+    target = inputs[model.TARGET_KEY].cpu().numpy()
+    prediction = outputs[model.PREDICTION_KEY].cpu().numpy()
+
+    if target.shape[-1] == 1:
+        target = np.squeeze(target, -1)
+    if prediction.shape[-1] == 1:
+        prediction = np.squeeze(prediction, -1)
 
     if model.PREDICTION_IS_SEQUENCE:
         sequence_lengths = _get_sequence_lengths(inputs['input_ids'])

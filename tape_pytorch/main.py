@@ -55,6 +55,8 @@ def setup_model(model_type: str,
         else:
             base_config = registry.get_model_class(model_type).config_class()
             config = TAPEConfig(base_config, base_model=model_type)
+        if task == 'secondary_structure':
+            config.num_classes = 3
         model = model_cls(config)
 
     model.cuda()
