@@ -47,7 +47,8 @@ def sequence_accuracy(labels: Sequence[Sequence[int]],
         label_array = np.asarray(label)
         scores_array = np.asarray(score)
         predictions = np.argmax(scores_array, -1)
-        is_correct = label_array == predictions
+        mask = label_array != -1
+        is_correct = label_array[mask] == predictions[mask]
 
         correct += is_correct.sum()
         total += is_correct.size
