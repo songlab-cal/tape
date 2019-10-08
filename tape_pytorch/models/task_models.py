@@ -33,7 +33,6 @@ class TAPEConfig(PretrainedConfig):
     def __init__(self,
                  other_config_or_json_file,
                  base_model=None,
-                 num_classes: Optional[int] = None,
                  **kwargs):
         super().__init__(**kwargs)
         if isinstance(other_config_or_json_file, str):
@@ -58,11 +57,6 @@ class TAPEConfig(PretrainedConfig):
 
         if self.base_model not in BASE_MODEL_CLASSES:
             raise ValueError(f"Unirecognized base model class {self.base_model}")
-
-        if getattr(self, 'num_classes', None) is None:
-            self.num_classes = num_classes
-        else:
-            assert num_classes is None or self.num_classes == num_classes
 
     @classmethod
     def from_dict(cls, json_object):
@@ -217,18 +211,17 @@ class FloatPredictModel(TAPEPreTrainedModel):
         return outputs
 
 
-@registry.register_task_model('remote_homology')
 class SequenceClassificationModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'label'
     PREDICTION_KEY = 'class_scores'
     PREDICTION_IS_SEQUENCE = False
 
-    def __init__(self, base_model, config):
-        super().__init__()
+    def __init__(self, config, num_classes):
+        super().__init__(config)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(
-            config.hidden_size, config.hidden_size * 2, config.num_classes, 0.5)
+            config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
 
         self.apply(self.init_weights)
 
@@ -250,20 +243,26 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
         return outputs  # (class_prediction_loss), class_scores, (hidden_states), (attentions)
 
 
-@registry.register_task_model('secondary_structure')
+@registry.register_task_model('remote_homology')
+class RemoteHomologyModel(SequenceClassificationModel):
+
+    def __init__(self, config):
+        super().__init__(config, 1195)
+
+
 class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
     TARGET_KEY = 'sequence_labels'
     PREDICTION_KEY = 'sequence_class_scores'
     PREDICTION_IS_SEQUENCE = True
 
-    def __init__(self, config):
+    def __init__(self, config, num_classes: int):
         super().__init__(config)
         if config.num_classes is None:
             raise ValueError("Must pass value for num_classes")
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(
-            config.hidden_size, config.hidden_size * 2, config.num_classes, 0.5)
+            config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
 
         self.apply(self.init_weights)
 
@@ -309,6 +308,13 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
         return outputs
+
+
+@registry.register_task_model('secondary_structure')
+class SS3ClassModel(SequenceToSequenceClassificationModel):
+
+    def __init__(self, config):
+        super().__init__(config, 3)
 
 
 class SimpleMLP(nn.Module):

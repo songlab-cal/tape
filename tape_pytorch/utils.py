@@ -58,9 +58,12 @@ def path_to_datetime(path: Path) -> datetime:
     try:
         year, month, day, hour, minute, second = datetime_string.split('-')
     except ValueError:
-        # Deprecated datetime strings
-        year, month, day, time_str = datetime_string.split('-')
-        hour, minute, second = time_str.split(':')
+        try:
+            # Deprecated datetime strings
+            year, month, day, time_str = datetime_string.split('-')
+            hour, minute, second = time_str.split(':')
+        except ValueError:
+            return datetime(int(0), int(0), int(0))
 
     pathdatetime = datetime(
         int(year), int(month), int(day), int(hour), int(minute), int(second))
@@ -85,9 +88,12 @@ def get_savepath_and_expname(output_dir: str,
             torch.distributed.barrier()
     else:
         torch.distributed.barrier()
-        save_files = Path(output_dir).iterdir()
-        save_path = max(save_files, key=path_to_datetime)
-        exp_name = save_path.name
+        if exp_name is None:
+            save_files = Path(output_dir).iterdir()
+            save_path = max(save_files, key=path_to_datetime)
+            exp_name = save_path.name
+        else:
+            save_path = Path(output_dir) / exp_name
 
     return save_path, exp_name
 
