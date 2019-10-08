@@ -321,6 +321,8 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument('--from-pretrained', default=None, type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--log-dir', default='./logs', type=str)
+    parser.add_argument('--no-eval', action='store_true',
+                        help='Flag to not run eval pass. Useful for gridsearching.')
     return parser
 
 
@@ -456,7 +458,8 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
     for epoch_id in range(args.num_train_epochs):
         try:
             run_train_epoch(epoch_id, train_loader, trainer, viz, args)
-            run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
+            if not args.no_eval:
+                run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
         except RuntimeError as e:
             if 'CUDA out of memory' in e.args[0]:
                 message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
@@ -472,9 +475,8 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
             raise
 
         # Save trained model
-        logger.info("** ** * Saving trained model ** ** * ")
-
-        if args.is_master:
+        if args.is_master and not (args.no_eval and epoch_id + 1 < args.num_train_epochs):
+            logger.info("** ** * Saving trained model ** ** * ")
             # Only save the model itself
             output_model_dir = save_path / f"pytorch_model_{epoch_id}"
             output_model_dir.mkdir()
@@ -483,7 +485,7 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
             logger.info(f"Saving model checkpoint to {output_model_dir}")
 
 
-def run_eval(args: Optional[argparse.Namespace] = None) -> None:
+def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
     if args is None:
         base_parser = create_base_parser()
         parser = create_eval_parser(base_parser)
@@ -530,14 +532,14 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> None:
     with (pretrained_dir / 'results.pkl').open('wb') as f:
         pkl.dump(save_outputs, f)
 
+    return metrics
+
 
 def run_embed(args: Optional[argparse.Namespace] = None) -> None:
     if args is None:
         base_parser = create_base_parser()
         parser = create_embed_parser(base_parser)
         args = parser.parse_args()
-
-    from tape_pytorch.datasets import TAPEDataset
 
     if args.from_pretrained is None:
         raise ValueError("Must specify pretrained model")
@@ -633,6 +635,64 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
         process.join()
         if process.exitcode != 0:
             raise ProcessError(f"Process failed with exitcode {process.exitcode}")
+
+
+def run_gridsearch(args: Optional[argparse.Namespace] = None, env=None) -> None:
+    import random
+    from itertools import product
+    from copy import copy
+    import shutil
+
+    if env is not None:
+        os.environ = env
+
+    if args is None:
+        parser = argparse.ArgumentParser()
+        parser.add_argument('config_file', type=argparse.FileType('r'))
+        gridsearch_args = parser.parse_args()
+        config = json.load(gridsearch_args.config_file)
+        gridsearch_args.config_file.close()
+        # print(gridsearch_args.config_file)
+        # with gridsearch_args.config_file.open() as f:
+            # config = json.load(f)
+
+        fixed_values = {}
+        grid_values = {}
+
+        for key, value in config.items():
+            if isinstance(value, list) and key != 'metrics':
+                grid_values[key] = value
+            else:
+                fixed_values[key] = value
+
+        args = argparse.Namespace(**fixed_values)
+
+    args.no_eval = True
+    args.exp_name = 'gridsearch' + "_{:0>6d}".format(random.randint(0, int(1e6)))
+    args.save_callback = []
+
+    def unroll(key, values):
+        return ((key, value) for value in values)
+
+    results = []
+    for grid_args in product(*(unroll(key, values) for key, values in grid_values.items())):
+        run_args = copy(args)
+        for key, arg in grid_args:
+            setattr(run_args, key, arg)
+        run_train(copy(run_args))
+        run_args.from_pretrained = os.path.join(
+            run_args.output_dir, run_args.exp_name, f'pytorch_model_{run_args.num_train_epochs - 1}')
+        metrics = run_eval(copy(run_args))
+        results.append((grid_args, metrics))
+        shutil.rmtree(run_args.from_pretrained)
+
+    for grid_args, metrics in results:
+        print(grid_args)
+        print(metrics)
+        print()
+
+    with open(os.path.join(args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
+        pkl.dump(results, f)
 
 
 if __name__ == '__main__':

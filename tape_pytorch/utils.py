@@ -39,16 +39,17 @@ def setup_logging(local_rank: int, save_path: Optional[Path] = None) -> None:
         "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
         datefmt="%y/%m/%d %H:%M:%S")
 
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(log_level)
-    console_handler.setFormatter(formatter)
-    root_logger.addHandler(console_handler)
+    if not root_logger.hasHandlers():
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setLevel(log_level)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
 
-    if save_path is not None:
-        file_handler = logging.FileHandler(save_path / 'log')
-        file_handler.setLevel(log_level)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
+        if save_path is not None:
+            file_handler = logging.FileHandler(save_path / 'log')
+            file_handler.setLevel(log_level)
+            file_handler.setFormatter(formatter)
+            root_logger.addHandler(file_handler)
 
 
 def path_to_datetime(path: Path) -> datetime:
@@ -79,7 +80,7 @@ def get_savepath_and_expname(output_dir: str,
     if is_master:
         exp_name = get_expname(exp_name)
         save_path = Path(output_dir) / exp_name
-        save_path.mkdir(parents=True, exist_ok=False)
+        save_path.mkdir(parents=True, exist_ok=True)
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
     else:
