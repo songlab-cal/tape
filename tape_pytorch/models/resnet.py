@@ -1,6 +1,7 @@
 import json
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
 from pytorch_transformers.modeling_bert import BertLayerNorm
@@ -223,7 +224,7 @@ class ResNetPooler(nn.Module):
         self.dense = nn.Linear(config.output_size, config.output_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, mask=None):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         first_token_tensor = hidden_states[:, 0]

@@ -79,11 +79,6 @@ Transformer.config_class = TransformerConfig
 registry.register_model('transformer')(Transformer)
 
 
-@registry.register_model('lstm')
-class LSTM(PreTrainedModel):
-    pass
-
-
 @registry.register_model('unirep')
 class UniRep(PreTrainedModel):
     pass
