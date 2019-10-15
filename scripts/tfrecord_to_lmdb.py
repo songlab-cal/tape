@@ -64,7 +64,7 @@ file_lists += list((data_dir / 'secondary_structure').glob('*.tfrecord'))
 deserialize_funcs = {
     'pfam': data_utils.deserialize_pfam_sequence,
     'proteinnet': data_utils.deserialize_proteinnet_sequence,
-    'fluorescence': data_utils.deserialize_fluorescence_sequence,
+    'fluorescence': data_utils.deserialize_gfp_sequence,
     'stability': data_utils.deserialize_stability_sequence,
     'remote_homology': data_utils.deserialize_remote_homology_sequence,
     'secondary_structure': data_utils.deserialize_secondary_structure}
@@ -86,5 +86,8 @@ for flist in file_lists:
     name = name.replace('contact_map', 'proteinnet')
 
     outfile = out_dir / task_name / name
+    if outfile.exists():
+        continue
+
     print("Converting", name)
     convert(flist, outfile, deserialization_func)
