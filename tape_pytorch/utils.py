@@ -1,4 +1,4 @@
-from typing import Union, Optional, Tuple, TypeVar
+import typing
 import random
 import sys
 from pathlib import Path
@@ -10,6 +10,7 @@ import argparse
 
 import numpy as np
 import torch
+import torch.distributed as dist
 from tensorboardX import SummaryWriter
 
 
@@ -30,7 +31,7 @@ def check_is_dir(dir_path: str) -> str:
         raise argparse.ArgumentTypeError(f"Directory path: {dir_path} is not a valid directory")
 
 
-def setup_logging(local_rank: int, save_path: Optional[Path] = None) -> None:
+def setup_logging(local_rank: int, save_path: typing.Optional[Path] = None) -> None:
     log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
     root_logger = logging.getLogger()
     root_logger.setLevel(log_level)
@@ -70,7 +71,7 @@ def path_to_datetime(path: Path) -> datetime:
     return pathdatetime
 
 
-def get_expname(exp_name: Optional[str]) -> str:
+def get_expname(exp_name: typing.Optional[str]) -> str:
     if exp_name is None:
         time_stamp = strftime("%y-%m-%d-%H-%M-%S", gmtime())
         exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
@@ -78,8 +79,8 @@ def get_expname(exp_name: Optional[str]) -> str:
 
 
 def get_savepath_and_expname(output_dir: str,
-                             exp_name: Optional[str],
-                             is_master: bool = True) -> Tuple[Path, str]:
+                             exp_name: typing.Optional[str],
+                             is_master: bool = True) -> typing.Tuple[Path, str]:
     if is_master:
         exp_name = get_expname(exp_name)
         save_path = Path(output_dir) / exp_name
@@ -103,12 +104,30 @@ def set_random_seeds(seed: int, n_gpu: int) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     if n_gpu > 0:
-        torch.cuda.manual_seed_all(seed)
+        torch.cuda.manual_seed_all(seed)  # type: ignore
+
+
+def get_effective_num_gpus(local_rank: int, n_gpu: int) -> int:
+    if local_rank == -1:
+        num_gpus = n_gpu
+    else:
+        num_gpus = dist.get_world_size()
+    return num_gpus
+
+
+def get_effective_batch_size(batch_size: int,
+                             local_rank: int,
+                             n_gpu: int,
+                             gradient_accumulation_steps: int = 1) -> int:
+    eff_batch_size = float(batch_size)
+    eff_batch_size /= gradient_accumulation_steps
+    eff_batch_size /= get_effective_num_gpus(local_rank, n_gpu)
+    return int(eff_batch_size)
 
 
 class TBLogger:
 
-    def __init__(self, log_dir: Union[str, Path], exp_name: str, local_rank: int):
+    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str, local_rank: int):
         is_master = local_rank in (-1, 0)
         if is_master:
             log_dir = Path(log_dir) / exp_name
@@ -124,7 +143,7 @@ class TBLogger:
 class MetricsAccumulator:
 
     def __init__(self, smoothing: float = 0.95):
-        self._currloss: Optional[float] = None
+        self._currloss: typing.Optional[float] = None
         self._totalloss = 0.
         self._nupdates = 0
         self._smoothing = smoothing

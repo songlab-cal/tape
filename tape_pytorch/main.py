@@ -82,21 +82,6 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
-def get_effective_num_gpus(args: argparse.Namespace) -> int:
-    if args.local_rank == -1:
-        num_gpus = args.n_gpu
-    else:
-        num_gpus = dist.get_world_size()
-    return num_gpus
-
-
-def get_effective_batch_size(args: argparse.Namespace) -> int:
-    batch_size = float(args.batch_size)
-    batch_size /= getattr(args, 'gradient_accumulation_steps', 1)
-    batch_size /= get_effective_num_gpus(args)
-    return int(batch_size)
-
-
 def setup_dataset_and_loader(args: argparse.Namespace,
                              dataset_type: str) -> Tuple[TAPEDataset, DataLoader]:
 
@@ -109,7 +94,9 @@ def setup_dataset_and_loader(args: argparse.Namespace,
 
     loader = DataLoader(  # type: ignore
         dataset,
-        batch_size=get_effective_batch_size(args),
+        batch_size=utils.get_effective_batch_size(
+            args.batch_size, args.local_rank, args.n_gpu,
+            getattr(args, 'gradient_accumulation_steps', 1)),
         num_workers=args.num_workers,
         collate_fn=collate_fn_cls(),
         sampler=sampler_type(dataset))
@@ -438,15 +425,19 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
                 run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
         except RuntimeError as e:
             if 'CUDA out of memory' in e.args[0]:
+                eff_ngpu = utils.get_effective_num_gpus(args.local_rank, args.n_gpu)
+                eff_batch_size = utils.get_effective_batch_size(
+                    args.batch_size, args.local_rank, args.n_gpu,
+                    args.gradient_accumulation_steps)
                 message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
                            f"divide each batch over more forward passes.\n\n"
                            f"\tHyperparameters:\n"
                            f"\t\tbatch_size per backward-pass: {args.batch_size}\n"
                            f"\t\tgradient_accumulation_steps: "
                            f"{args.gradient_accumulation_steps}\n"
-                           f"\t\tn_gpu: {get_effective_num_gpus(args)}\n"
+                           f"\t\tn_gpu: {eff_ngpu}\n"
                            f"\t\tbatch_size per (gpu * forward-pass): "
-                           f"{get_effective_batch_size(args)}")
+                           f"{eff_batch_size}")
                 raise RuntimeError(message).with_traceback(e.__traceback__)
             raise
 
