@@ -16,6 +16,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
+import torch.distributed as dist
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers import AdamW
 from pytorch_transformers import WarmupLinearSchedule
@@ -28,8 +29,7 @@ except ImportError:
     APEX_FOUND = False
 
 from tape_pytorch.registry import registry
-from tape_pytorch.models.task_models import TAPEConfig
-from tape_pytorch.trainer import Trainer
+import tape_pytorch.training as training
 import tape_pytorch.utils as utils
 from tape_pytorch.datasets import TAPEDataset
 
@@ -37,29 +37,6 @@ from tape_pytorch.datasets import TAPEDataset
 logger = logging.getLogger(__name__)
 warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
     'ignore', message='Was asked to gather along dimension 0', module='torch.nn.parallel')
-
-
-def setup_model(model_type: str,
-                task: str,
-                from_pretrained: Optional[str],
-                model_config_file: Optional[str]):
-
-    model_cls = registry.get_task_model_class(task)
-    if from_pretrained is not None:
-        assert model_config_file is None
-        load_dir = Path(from_pretrained)
-        model = model_cls.from_pretrained(load_dir)
-    else:
-        if model_config_file is not None:
-            config = TAPEConfig.from_json_file(model_config_file)
-        else:
-            base_config = registry.get_model_class(model_type).config_class()
-            config = TAPEConfig(base_config, base_model=model_type)
-        model = model_cls(config)
-
-    model.cuda()
-
-    return model
 
 
 def setup_optimizer(model: PreTrainedModel,
@@ -92,7 +69,7 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
         torch.cuda.set_device(args.local_rank)
         args.device = torch.device("cuda", args.local_rank)
         args.n_gpu = 1
-        torch.distributed.init_process_group(backend="nccl")
+        dist.init_process_group(backend="nccl")
     elif not torch.cuda.is_available() or args.no_cuda:
         args.device = torch.device("cpu")
         args.n_gpu = torch.cuda.device_count()
@@ -109,7 +86,7 @@ def get_effective_num_gpus(args: argparse.Namespace) -> int:
     if args.local_rank == -1:
         num_gpus = args.n_gpu
     else:
-        num_gpus = torch.distributed.get_world_size()
+        num_gpus = dist.get_world_size()
     return num_gpus
 
 
@@ -147,7 +124,7 @@ def get_num_train_optimization_steps(train_dataset: TAPEDataset,
 
 def run_train_epoch(epoch_id: int,
                     train_loader: DataLoader,
-                    trainer: Trainer,
+                    trainer: training.Trainer,
                     viz: utils.TBLogger,
                     args: argparse.Namespace) -> None:
     metrics = utils.MetricsAccumulator(smoothing=1 - 1 / args.num_log_iter)
@@ -193,7 +170,7 @@ def run_train_epoch(epoch_id: int,
 
 def run_valid_epoch(epoch_id: int,
                     valid_loader: DataLoader,
-                    trainer: Trainer,
+                    trainer: training.Trainer,
                     viz: utils.TBLogger,
                     args: argparse.Namespace) -> None:
     num_batches = len(valid_loader)
@@ -347,8 +324,9 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
 
 
 def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Embed a set of proteins wiht a pretrained model',
-                                     parents=[base_parser])
+    parser = argparse.ArgumentParser(
+        description='Embed a set of proteins wiht a pretrained model',
+        parents=[base_parser])
     parser.add_argument('datafile', type=str,
                         help='File containing set of proteins to embed')
     parser.add_argument('outfile', type=str,
@@ -425,8 +403,8 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
         f"distributed_training: {args.local_rank != -1}, "
         f"16-bits training: {args.fp16}")
 
-    model = setup_model(
-        args.model_type, args.task, args.from_pretrained, args.model_config_file)
+    model = training.setup_model(
+        args.task, args.from_pretrained, args.model_config_file, args.model_type)
     optimizer = setup_optimizer(model, args.learning_rate)
     viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
 
@@ -435,7 +413,7 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
     if args.local_rank != -1:
         model = DDP(model)
     elif args.n_gpu > 1:
-        model = nn.DataParallel(model)
+        model = nn.DataParallel(model)  # type: ignore
 
     train_dataset, train_loader = setup_dataset_and_loader(args, 'train')
     valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
@@ -445,7 +423,7 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
     scheduler = WarmupLinearSchedule(
         optimizer, warmup_steps=args.warmup_steps, t_total=num_train_optimization_steps)
 
-    trainer = Trainer(model, optimizer, scheduler, args)
+    trainer = training.Trainer(model, optimizer, scheduler, args)
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -504,11 +482,11 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
 
-    model = setup_model(
-        args.model_type, args.task, args.from_pretrained, args.model_config_file)
+    model = training.setup_model(
+        args.task, args.from_pretrained, args.model_config_file, args.model_type)
 
     if args.n_gpu > 1:
-        model = nn.DataParallel(model)
+        model = nn.DataParallel(model)  # type: ignore
 
     valid_dataset, valid_loader = setup_dataset_and_loader(args, args.split)
 
@@ -552,11 +530,11 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
 
-    model = setup_model(
+    model = training.setup_model(
         args.model_type, args.task, args.from_pretrained, args.model_config_file)
 
     if args.n_gpu > 1:
-        model = nn.DataParallel(model)
+        model = nn.DataParallel(model)  # type: ignore
 
     dataset, loader = setup_dataset_and_loader(args, args.datafile)
 
@@ -589,7 +567,7 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
     pytorch's torch.distributed.launch, modified to be easy to use for
     tape.
     """
-    from multiprocessing import Process, ProcessError
+    from multiprocessing import Process
     import time
 
     if args is None:
