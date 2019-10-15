@@ -64,6 +64,9 @@ class TAPEConfig(PretrainedConfig):
         else:
             assert num_classes is None or self.num_classes == num_classes
 
+        if not hasattr(self, 'output_size'):
+            self.output_size = self.hidden_size
+
     @classmethod
     def from_dict(cls, json_object):
         """Constructs a `Config` from a Python dictionary of parameters."""
@@ -145,6 +148,11 @@ class MaskedLMModel(TAPEPreTrainedModel):
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.classify = BertOnlyMLMHead(config)
 
+        if config.output_size != config.hidden_size:
+            self.project = nn.Linear(config.output_size, config.hidden_size)
+        else:
+            self.project = lambda x: x
+
         self.apply(self.init_weights)
         self.tie_weights()
 
@@ -166,7 +174,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, position_ids=None, token_type_ids=None,
                             attention_mask=attention_mask, head_mask=None))
-        prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
+        prediction_scores = self.classify(self.project(outputs[cls.SEQUENCE_EMBEDDING_KEY]))
 
         outputs[cls.PREDICTION_KEY] = prediction_scores
 

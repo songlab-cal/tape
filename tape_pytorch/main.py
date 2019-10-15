@@ -590,6 +590,7 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
     tape.
     """
     from multiprocessing import Process, ProcessError
+    import time
 
     if args is None:
         base_parser = create_base_parser()
@@ -629,10 +630,20 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
         process.start()
         processes.append(process)
 
-    for process in processes:
-        process.join()
-        if process.exitcode != 0:
-            raise ProcessError(f"Process failed with exitcode {process.exitcode}")
+    while all(process.is_alive() for process in processes):
+        time.sleep(1)
+
+    process_failed = any(process.exitcode not in (None, 0) for process in processes)
+
+    if process_failed:
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+
+    # for process in processes:
+        # process.join()
+        # if process.exitcode != 0:
+            # raise ProcessError(f"Process failed with exitcode {process.exitcode}")
 
 
 if __name__ == '__main__':
