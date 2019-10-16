@@ -1,13 +1,18 @@
 import typing
 import logging
 import argparse
+from pathlib import Path
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data.distributed import DistributedSampler
 
 import tape_pytorch.models as models
+import tape_pytorch.utils as utils
 from tape_pytorch.registry import registry
+from tape_pytorch.datasets import TAPEDataset
 
 try:
     from apex import amp
@@ -34,6 +39,37 @@ def setup_model(task: str,
             "Must specify one of <from_pretrained, model_config_file, or model_type>")
     model.cuda()
     return model
+
+
+def setup_dataset(task: str,
+                  data_dir: typing.Union[str, Path],
+                  split: str,
+                  tokenizer: str) -> TAPEDataset:
+    dataset_class: typing.Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
+        task)
+    dataset = dataset_class(data_dir, split, tokenizer)
+    return dataset
+
+
+def setup_loader(task: str,
+                 dataset: TAPEDataset,
+                 batch_size: int,
+                 local_rank: int,
+                 n_gpu: int,
+                 gradient_accumulation_steps: int,
+                 num_workers: int) -> DataLoader:
+    collate_fn_cls = registry.get_collate_fn_class(task)
+    sampler_type = (DistributedSampler if local_rank != -1 else RandomSampler)
+
+    loader = DataLoader(  # type: ignore
+        dataset,
+        batch_size=utils.get_effective_batch_size(
+            batch_size, local_rank, n_gpu, gradient_accumulation_steps),
+        num_workers=num_workers,
+        collate_fn=collate_fn_cls(),
+        sampler=sampler_type(dataset))
+
+    return loader
 
 
 class Trainer:

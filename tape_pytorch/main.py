@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Type, Callable, Sequence, List, Dict, Any
+import typing
 import os
 from time import strftime, gmtime
 from timeit import default_timer as timer
@@ -14,8 +14,7 @@ import pickle as pkl
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, RandomSampler
-from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data import DataLoader
 import torch.distributed as dist
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers import AdamW
@@ -32,6 +31,9 @@ from tape_pytorch.registry import registry
 import tape_pytorch.training as training
 import tape_pytorch.utils as utils
 from tape_pytorch.datasets import TAPEDataset
+
+CallbackList = typing.Sequence[typing.Callable]
+OutputDict = typing.Dict[str, typing.List[typing.Any]]
 
 
 logger = logging.getLogger(__name__)
@@ -80,28 +82,6 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
     args.is_master = args.local_rank in (-1, 0)
 
     return args
-
-
-def setup_dataset_and_loader(args: argparse.Namespace,
-                             dataset_type: str) -> Tuple[TAPEDataset, DataLoader]:
-
-    dataset_class: Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
-        args.task)
-    collate_fn_cls = registry.get_collate_fn_class(args.task)
-    sampler_type = (DistributedSampler if args.local_rank != -1 else RandomSampler)
-
-    dataset = dataset_class(args.data_dir, dataset_type, args.tokenizer)
-
-    loader = DataLoader(  # type: ignore
-        dataset,
-        batch_size=utils.get_effective_batch_size(
-            args.batch_size, args.local_rank, args.n_gpu,
-            getattr(args, 'gradient_accumulation_steps', 1)),
-        num_workers=args.num_workers,
-        collate_fn=collate_fn_cls(),
-        sampler=sampler_type(dataset))
-
-    return dataset, loader
 
 
 def get_num_train_optimization_steps(train_dataset: TAPEDataset,
@@ -185,8 +165,8 @@ def run_valid_epoch(epoch_id: int,
 def run_eval_epoch(eval_loader: DataLoader,
                    model: nn.Module,
                    args: argparse.Namespace,
-                   save_callback: Optional[Sequence[Callable]] = None) \
-        -> Dict[str, List[Any]]:
+                   save_callback: typing.Optional[CallbackList] = None) \
+        -> OutputDict:
     num_batches = len(eval_loader)
     eval_loss = 0.
     loss_key = getattr(model, 'module', model).LOSS_KEY
@@ -328,7 +308,7 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
 
 def create_distributed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False, parents=[base_parser])
-    # Optional arguments for the launch helper
+    # typing.Optional arguments for the launch helper
     parser.add_argument("--nnodes", type=int, default=1,
                         help="The number of nodes to use for distributed "
                              "training")
@@ -352,7 +332,7 @@ def create_distributed_parser(base_parser: argparse.ArgumentParser) -> argparse.
     return parser
 
 
-def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
+def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
     if env is not None:
         os.environ = env
 
@@ -402,8 +382,14 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
     elif args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    train_dataset, train_loader = setup_dataset_and_loader(args, 'train')
-    valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
+    train_dataset = training.setup_dataset(args.task, args.data_dir, 'train', args.tokenizer)
+    valid_dataset = training.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    train_loader = training.setup_loader(
+        args.task, train_dataset, args.batch_size, args.local_rank, args.n_gpu,
+        args.gradient_accumulation_steps, args.num_workers)
+    valid_loader = training.setup_loader(
+        args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
+        args.gradient_accumulation_steps, args.num_workers)
 
     num_train_optimization_steps = get_num_train_optimization_steps(train_dataset, args)
 
@@ -452,7 +438,7 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
             logger.info(f"Saving model checkpoint to {output_model_dir}")
 
 
-def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
+def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[str, float]:
     if args is None:
         base_parser = create_base_parser()
         parser = create_eval_parser(base_parser)
@@ -479,7 +465,10 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
     if args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    valid_dataset, valid_loader = setup_dataset_and_loader(args, args.split)
+    valid_dataset = training.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    valid_loader = training.setup_loader(
+        args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
+        1, args.num_workers)
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
 
@@ -502,7 +491,7 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
     return metrics
 
 
-def run_embed(args: Optional[argparse.Namespace] = None) -> None:
+def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
     if args is None:
         base_parser = create_base_parser()
         parser = create_embed_parser(base_parser)
@@ -527,7 +516,9 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
     if args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    dataset, loader = setup_dataset_and_loader(args, args.datafile)
+    dataset = training.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
+    loader = training.setup_loader(
+        args.task, dataset, args.batch_size, args.local_rank, args.n_gpu, 1, args.num_workers)
 
     torch.set_grad_enabled(False)
     model.eval()
@@ -553,7 +544,7 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
         pkl.dump(output_dict, f)
 
 
-def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
+def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
     """Runs distributed training via multiprocessing. Mostly ripped from
     pytorch's torch.distributed.launch, modified to be easy to use for
     tape.
@@ -615,7 +606,7 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
             # raise ProcessError(f"Process failed with exitcode {process.exitcode}")
 
 
-def run_gridsearch(args: Optional[argparse.Namespace] = None, env=None) -> None:
+def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
     import random
     from itertools import product
     from copy import copy
