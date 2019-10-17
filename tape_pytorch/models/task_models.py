@@ -11,8 +11,9 @@ from torch.nn.utils.weight_norm import weight_norm
 
 from tape_pytorch.registry import registry
 
-from .base_models import Transformer, LSTM, Bepler, UniRep
+from .base_models import Transformer, Bepler, UniRep
 from .resnet import ResNet
+from .lstm import LSTM
 
 
 BASE_MODEL_CLASSES = {
@@ -57,6 +58,9 @@ class TAPEConfig(PretrainedConfig):
 
         if self.base_model not in BASE_MODEL_CLASSES:
             raise ValueError(f"Unirecognized base model class {self.base_model}")
+
+        if not hasattr(self, 'hidden_act'):
+            self.hidden_act = 'relu'
 
     @classmethod
     def from_dict(cls, json_object):

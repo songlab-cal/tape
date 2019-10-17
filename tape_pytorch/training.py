@@ -76,7 +76,7 @@ class Trainer:
 
     def __init__(self,
                  model: nn.Module,
-                 optimizer: optim.optimizer.Optimizer,
+                 optimizer: optim.Optimizer,  # type: ignore
                  scheduler: optim.lr_scheduler.LambdaLR,
                  args: argparse.Namespace):
 

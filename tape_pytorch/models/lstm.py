@@ -4,7 +4,6 @@ import torch.nn as nn
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
-from pytorch_transformers.modeling_bert import BertLayerNorm
 from pytorch_transformers.modeling_bert import BertEmbeddings
 
 from tape_pytorch.registry import registry
@@ -49,28 +48,41 @@ class LSTMConfig(PretrainedConfig):
                              "or the path to a pretrained model config file (str)")
 
         self.type_vocab_size = 1
+        self.output_size = 2 * self.hidden_size
 
 
 class LSTMPooler(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.dense = nn.Linear(config.output_size, config.output_size)
+        self.dense = nn.Linear(
+            config.num_hidden_layers * config.output_size, config.output_size)
         self.activation = nn.Tanh()
+        self.num_hidden_layers = config.num_hidden_layers
+        self.hidden_size = config.hidden_size
 
     def forward(self, hidden_states):
-        pass
+        h_out, c_out = hidden_states
+
+        # Permute things around
+        # h_out = h_out.view(self.num_hidden_layers, 2, -1, self.hidden_size)
+        h_out = h_out.transpose(1, 0).reshape(-1, 2 * self.num_hidden_layers * self.hidden_size)
+        x = self.dense(h_out)
+        x = self.activation(x)
+        return x
 
 
 @registry.register_model('lstm')
 class LSTM(PreTrainedModel):
+    config_class = LSTMConfig
 
     def __init__(self, config: LSTMConfig):
-        super().__init__()
+        super().__init__(config)
         self.embeddings = BertEmbeddings(config)
         self.encoder = nn.LSTM(
             config.hidden_size, config.hidden_size, config.num_hidden_layers,
-            batch_first=True, bidirectional=True)
+            batch_first=True, bidirectional=True, dropout=config.hidden_dropout_prob)
+        self.encoder.flatten_parameters()
         self.pooler = LSTMPooler(config)
 
     def forward(self,
@@ -95,18 +107,13 @@ class LSTM(PreTrainedModel):
             input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
 
         padded_embeddings = pack_padded_sequence(
-            embedding_output, input_lengths, batch_first=True)
-        packed_sequence_output, hidden_output = self.encoder(
-            padded_embeddings, batch_first=True)
-        sequence_output, _ = pad_packed_sequence(packed_sequence_output, batch_first=True)
+            embedding_output, input_lengths, batch_first=True,
+            enforce_sorted=False)
+        packed_sequence_output, hidden_states = self.encoder(
+            padded_embeddings)
+        sequence_output, _ = pad_packed_sequence(
+            packed_sequence_output, batch_first=True)
+        pooled_output = self.pooler(hidden_states)
 
-        return sequence_output, hidden_output
-
-        # sequence_output = self.encoder(embedding_output.transpose(1, 2),
-                                       # extended_attention_mask.transpose(1, 2)).transpose(1, 2)
-        # sequence_output = encoder_outputs[0]
-        # pooled_output = self.pooler(sequence_output)
-
-        # add hidden_states and attentions if they are here
-        # outputs = (sequence_output, pooled_output,)
-        # return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
+        outputs = (sequence_output, pooled_output,)
+        return outputs
