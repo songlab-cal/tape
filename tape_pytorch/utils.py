@@ -10,6 +10,7 @@ import argparse
 
 import numpy as np
 import torch
+from torch.utils.data import Dataset
 import torch.distributed as dist
 from tensorboardX import SummaryWriter
 
@@ -123,6 +124,12 @@ def get_effective_batch_size(batch_size: int,
     eff_batch_size /= gradient_accumulation_steps
     eff_batch_size /= get_effective_num_gpus(local_rank, n_gpu)
     return int(eff_batch_size)
+
+
+def get_num_train_optimization_steps(dataset: Dataset,
+                                     batch_size: int,
+                                     num_train_epochs: int) -> int:
+    return int(len(dataset) / batch_size * num_train_epochs)
 
 
 class TBLogger:

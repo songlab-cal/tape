@@ -16,8 +16,6 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import torch.distributed as dist
-from pytorch_transformers.modeling_utils import PreTrainedModel
-from pytorch_transformers import AdamW
 from pytorch_transformers import WarmupLinearSchedule
 
 try:
@@ -30,7 +28,6 @@ except ImportError:
 from tape_pytorch.registry import registry
 import tape_pytorch.training as training
 import tape_pytorch.utils as utils
-from tape_pytorch.datasets import TAPEDataset
 
 CallbackList = typing.Sequence[typing.Callable]
 OutputDict = typing.Dict[str, typing.List[typing.Any]]
@@ -39,31 +36,6 @@ OutputDict = typing.Dict[str, typing.List[typing.Any]]
 logger = logging.getLogger(__name__)
 warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
     'ignore', message='Was asked to gather along dimension 0', module='torch.nn.parallel')
-
-
-def setup_optimizer(model: PreTrainedModel,
-                    learning_rate: float):
-
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-    param_optimizer = list(model.named_parameters())
-    optimizer_grouped_parameters = [
-        {
-            "params": [
-                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.01,
-        },
-        {
-            "params": [
-                p for n, p in param_optimizer if any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.0,
-        },
-    ]
-
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
-
-    return optimizer
 
 
 def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
@@ -84,14 +56,9 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
     return args
 
 
-def get_num_train_optimization_steps(train_dataset: TAPEDataset,
-                                     args: argparse.Namespace) -> int:
-    return int(len(train_dataset) / args.batch_size * args.num_train_epochs)
-
-
 def run_train_epoch(epoch_id: int,
                     train_loader: DataLoader,
-                    trainer: training.Trainer,
+                    trainer: training.BackwardRunner,
                     viz: utils.TBLogger,
                     args: argparse.Namespace) -> None:
     metrics = utils.MetricsAccumulator(smoothing=1 - 1 / args.num_log_iter)
@@ -137,21 +104,21 @@ def run_train_epoch(epoch_id: int,
 
 def run_valid_epoch(epoch_id: int,
                     valid_loader: DataLoader,
-                    trainer: training.Trainer,
+                    runner: training.ForwardRunner,
                     viz: utils.TBLogger,
                     args: argparse.Namespace) -> None:
     num_batches = len(valid_loader)
     eval_loss = 0.
 
     torch.set_grad_enabled(False)
-    trainer.model.eval()
+    runner.model.eval()
 
     if args.debug:
         valid_loader = itertools.islice(valid_loader, 10)  # type: ignore
 
     for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches,
                       disable=not args.is_master):
-        loss = trainer.forward(batch)
+        loss = runner.forward(batch)
         eval_loss += loss.item()
 
     eval_loss /= num_batches
@@ -372,7 +339,7 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
 
     model = training.setup_model(
         args.task, args.from_pretrained, args.model_config_file, args.model_type)
-    optimizer = setup_optimizer(model, args.learning_rate)
+    optimizer = training.setup_optimizer(model, args.learning_rate)
     viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
 
     if args.fp16:
@@ -391,12 +358,14 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
         args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
         args.gradient_accumulation_steps, args.num_workers)
 
-    num_train_optimization_steps = get_num_train_optimization_steps(train_dataset, args)
+    num_train_optimization_steps = utils.get_num_train_optimization_steps(
+        train_dataset, args.batch_size, args.num_train_epochs)
 
     scheduler = WarmupLinearSchedule(
         optimizer, warmup_steps=args.warmup_steps, t_total=num_train_optimization_steps)
 
-    trainer = training.Trainer(model, optimizer, scheduler, args)
+    trainer = training.BackwardRunner(
+        model, optimizer, scheduler, args.device, args.n_gpu, args.fp16, args.max_grad_norm)
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))

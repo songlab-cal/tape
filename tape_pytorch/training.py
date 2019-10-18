@@ -1,6 +1,5 @@
 import typing
 import logging
-import argparse
 from pathlib import Path
 
 import torch
@@ -8,6 +7,8 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, RandomSampler
 from torch.utils.data.distributed import DistributedSampler
+from pytorch_transformers import AdamW
+from pytorch_transformers.modeling_utils import PreTrainedModel
 
 import tape_pytorch.models as models
 import tape_pytorch.utils as utils
@@ -41,6 +42,31 @@ def setup_model(task: str,
     return model
 
 
+def setup_optimizer(model: PreTrainedModel,
+                    learning_rate: float):
+
+    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
+    param_optimizer = list(model.named_parameters())
+    optimizer_grouped_parameters = [
+        {
+            "params": [
+                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.01,
+        },
+        {
+            "params": [
+                p for n, p in param_optimizer if any(nd in n for nd in no_decay)
+            ],
+            "weight_decay": 0.0,
+        },
+    ]
+
+    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
+
+    return optimizer
+
+
 def setup_dataset(task: str,
                   data_dir: typing.Union[str, Path],
                   split: str,
@@ -72,34 +98,55 @@ def setup_loader(task: str,
     return loader
 
 
-class Trainer:
+class ForwardRunner:
+
+    def __init__(self,
+                 model: nn.Module,
+                 device: torch.device = torch.device('cuda:0'),
+                 n_gpu: int = 1):
+
+        self.model = model
+        self.device = device
+        self.n_gpu = n_gpu
+        self._loss_key = getattr(model, 'module', model).LOSS_KEY
+
+    def forward(self, batch: typing.Dict[str, torch.Tensor]) -> torch.Tensor:
+        if self.device.type == 'cuda':
+            batch = {name: tensor.cuda(device=self.device, non_blocking=True)
+                     for name, tensor in batch.items()}
+        outputs = self.model(**batch)
+        loss = outputs[self.loss_key]
+
+        if self.n_gpu > 1:
+            loss = loss.mean()
+
+        return loss
+
+    @property
+    def loss_key(self) -> str:
+        return self._loss_key
+
+
+class BackwardRunner(ForwardRunner):
 
     def __init__(self,
                  model: nn.Module,
                  optimizer: optim.Optimizer,  # type: ignore
                  scheduler: optim.lr_scheduler.LambdaLR,
-                 args: argparse.Namespace):
+                 device: torch.device = torch.device('cuda:0'),
+                 n_gpu: int = 1,
+                 fp16: bool = False,
+                 max_grad_norm: float = 1.0):
 
-        self.model = model
+        super().__init__(model, device, n_gpu)
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.args = args
+        self.fp16 = fp16
+        self.max_grad_norm = max_grad_norm
         self._global_step = 0
-        self._loss_key = getattr(model, 'module', model).LOSS_KEY
-
-    def forward(self, batch: typing.Dict[str, torch.Tensor]) -> torch.Tensor:
-        cuda_batch = {name: tensor.cuda(device=self.args.device, non_blocking=True)
-                      for name, tensor in batch.items()}
-        outputs = self.model(**cuda_batch)
-        loss = outputs[self._loss_key]
-
-        if self.args.n_gpu > 1:
-            loss = loss.mean()
-
-        return loss
 
     def backward(self, loss) -> None:
-        if self.args.fp16:
+        if self.fp16:
             with amp.scale_loss(loss, self.optimizer) as scaled_loss:
                 scaled_loss.backward()
         else:
@@ -107,7 +154,7 @@ class Trainer:
 
     def step(self) -> None:
         nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.args.max_grad_norm)
+            self.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
         self.scheduler.step()  # type: ignore
         self.optimizer.zero_grad()
