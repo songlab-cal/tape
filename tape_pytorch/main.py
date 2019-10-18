@@ -1,7 +1,5 @@
 import typing
 import os
-from time import strftime, gmtime
-from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
@@ -9,12 +7,10 @@ import itertools
 from tqdm import tqdm
 import argparse
 import warnings
-from collections import ChainMap
 import pickle as pkl
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
 import torch.distributed as dist
 from pytorch_transformers import WarmupLinearSchedule
 
@@ -54,127 +50,6 @@ def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
     args.is_master = args.local_rank in (-1, 0)
 
     return args
-
-
-def run_train_epoch(epoch_id: int,
-                    train_loader: DataLoader,
-                    trainer: training.BackwardRunner,
-                    viz: utils.TBLogger,
-                    args: argparse.Namespace) -> None:
-    metrics = utils.MetricsAccumulator(smoothing=1 - 1 / args.num_log_iter)
-
-    torch.set_grad_enabled(True)
-    trainer.model.train()
-
-    start_t = timer()
-
-    if args.debug:
-        train_loader = itertools.islice(train_loader, 10)  # type: ignore
-
-    loss_tmp = 0.
-    for step, batch in enumerate(train_loader):
-        loss = trainer.forward(batch)
-        loss /= args.gradient_accumulation_steps
-        loss_tmp += loss.item()
-        trainer.backward(loss)
-
-        if (step + 1) % args.gradient_accumulation_steps == 0:
-            trainer.step()
-            metrics.update(loss_tmp)
-            viz.line_plot(trainer.global_step, loss_tmp, "loss", "train")
-            loss_tmp = 0.
-
-            if trainer.global_step % args.num_log_iter == 0:
-                end_t = timer()
-                time_stamp = strftime("%y-%m-%d %X", gmtime())
-                ep = epoch_id + step / float(len(train_loader))
-                print_str = [
-                    f"[{time_stamp}]",
-                    f"[Ep: {ep:.2f}]",
-                    f"[Iter: {trainer.global_step}]",
-                    f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {metrics.loss():.5g}]",
-                    f"[LR: {trainer.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
-                start_t = end_t
-
-                logger.info(''.join(print_str))
-
-    logger.info(f"Train: [Loss: {metrics.final_loss():.5g}]")
-
-
-def run_valid_epoch(epoch_id: int,
-                    valid_loader: DataLoader,
-                    runner: training.ForwardRunner,
-                    viz: utils.TBLogger,
-                    args: argparse.Namespace) -> None:
-    num_batches = len(valid_loader)
-    eval_loss = 0.
-
-    torch.set_grad_enabled(False)
-    runner.model.eval()
-
-    if args.debug:
-        valid_loader = itertools.islice(valid_loader, 10)  # type: ignore
-
-    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches,
-                      disable=not args.is_master):
-        loss = runner.forward(batch)
-        eval_loss += loss.item()
-
-    eval_loss /= num_batches
-
-    print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-
-    logger.info(print_str)
-    viz.line_plot(epoch_id, eval_loss, "loss", "val")
-
-
-def run_eval_epoch(eval_loader: DataLoader,
-                   model: nn.Module,
-                   args: argparse.Namespace,
-                   save_callback: typing.Optional[CallbackList] = None) \
-        -> OutputDict:
-    num_batches = len(eval_loader)
-    eval_loss = 0.
-    loss_key = getattr(model, 'module', model).LOSS_KEY
-
-    torch.set_grad_enabled(False)
-    model.eval()
-
-    save_outputs = []
-
-    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches,
-                      disable=not args.is_master):
-        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
-                      for name, tensor in batch.items()}
-        outputs = model(**cuda_batch)
-        loss = outputs[loss_key]
-
-        if args.n_gpu > 1:
-            loss = loss.mean()
-
-        if save_callback is not None:
-            to_save = dict(ChainMap(
-                *(callback(model, batch, outputs) for callback in save_callback)))
-            save_outputs.append(to_save)
-
-        eval_loss += loss.item()
-
-    eval_loss /= num_batches
-
-    print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-
-    logger.info(print_str)
-
-    if len(save_outputs) > 0:
-        keys = save_outputs[0].keys()
-        output_dict = {
-            key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-            for key in keys}
-    else:
-        output_dict = {}
-
-    return output_dict
 
 
 def create_base_parser() -> argparse.ArgumentParser:
@@ -375,9 +250,11 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
 
     for epoch_id in range(args.num_train_epochs):
         try:
-            run_train_epoch(epoch_id, train_loader, trainer, viz, args)
+            training.run_train_epoch(
+                epoch_id, train_loader, trainer, viz, args.num_log_iter,
+                args.gradient_accumulation_steps)
             if not args.no_eval:
-                run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
+                training.run_valid_epoch(epoch_id, valid_loader, trainer, viz, args.is_master)
         except RuntimeError as e:
             if 'CUDA out of memory' in e.args[0]:
                 eff_ngpu = utils.get_effective_num_gpus(args.local_rank, args.n_gpu)
@@ -434,6 +311,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
     if args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
+    runner = training.ForwardRunner(model, args.device, args.n_gpu)
     valid_dataset = training.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
     valid_loader = training.setup_loader(
         args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
@@ -445,7 +323,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         save_callbacks.append(registry.get_callback('save_predictions'))
     metric_functions = [registry.get_metric(name) for name in args.metrics]
 
-    save_outputs = run_eval_epoch(valid_loader, model, args, save_callbacks)
+    save_outputs = training.run_eval_epoch(valid_loader, runner, args.is_master, save_callbacks)
 
     target_key = getattr(model, 'module', model).TARGET_KEY
     prediction_key = getattr(model, 'module', model).PREDICTION_KEY
