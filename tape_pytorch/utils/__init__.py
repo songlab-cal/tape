@@ -9,6 +9,7 @@ from .utils import get_num_train_optimization_steps  # noqa: F401
 from .utils import set_random_seeds  # noqa: F401
 from .utils import TBLogger  # noqa: F401
 from .utils import MetricsAccumulator  # noqa: F401
+from .utils import wrap_cuda_oom_error  # noqa: F401
 
 from .setup_utils import setup_logging  # noqa: F401
 from .setup_utils import setup_model  # noqa: F401

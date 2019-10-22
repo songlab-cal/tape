@@ -233,29 +233,13 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
     logger.info("  Num train steps = %d", num_train_optimization_steps)
 
     for epoch_id in range(args.num_train_epochs):
-        try:
+        with utils.wrap_cuda_oom_error(
+                args.local_rank, args.batch_size, args.n_gpu, args.gradient_accumulation_steps):
             training.run_train_epoch(
                 epoch_id, train_loader, trainer, viz, args.num_log_iter,
                 args.gradient_accumulation_steps)
             if not args.no_eval:
                 training.run_valid_epoch(epoch_id, valid_loader, trainer, viz, args.is_master)
-        except RuntimeError as e:
-            if 'CUDA out of memory' in e.args[0]:
-                eff_ngpu = utils.get_effective_num_gpus(args.local_rank, args.n_gpu)
-                eff_batch_size = utils.get_effective_batch_size(
-                    args.batch_size, args.local_rank, args.n_gpu,
-                    args.gradient_accumulation_steps)
-                message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
-                           f"divide each batch over more forward passes.\n\n"
-                           f"\tHyperparameters:\n"
-                           f"\t\tbatch_size per backward-pass: {args.batch_size}\n"
-                           f"\t\tgradient_accumulation_steps: "
-                           f"{args.gradient_accumulation_steps}\n"
-                           f"\t\tn_gpu: {eff_ngpu}\n"
-                           f"\t\tbatch_size per (gpu * forward-pass): "
-                           f"{eff_batch_size}")
-                raise RuntimeError(message).with_traceback(e.__traceback__)
-            raise
 
         # Save trained model
         if args.is_master and not (args.no_eval and epoch_id + 1 < args.num_train_epochs):

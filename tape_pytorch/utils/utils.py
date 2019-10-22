@@ -6,6 +6,7 @@ from time import strftime, gmtime
 from datetime import datetime
 import os
 import argparse
+import contextlib
 
 import numpy as np
 import torch
@@ -148,3 +149,58 @@ class MetricsAccumulator:
 
     def final_loss(self) -> float:
         return self._totalloss / self._nupdates
+
+
+class wrap_cuda_oom_error(contextlib.ContextDecorator):
+    """A context manager that wraps the Cuda OOM message so that you get some more helpful context
+    as to what you can/should change. Can also be used as a decorator.
+
+    Examples:
+        1) As a context manager:
+
+            with wrap_cuda_oom_error():
+                loss = model.forward(batch)
+                loss.backward()
+                optimizer.step()
+                optimizer.zero_grad
+
+        2) As a decorator:
+
+            @wrap_cuda_oom_error
+            def run_train_epoch(args):
+                ...
+                <code to run training epoch>
+                ...
+    """
+
+    def __init__(self,
+                 local_rank: int,
+                 batch_size: int,
+                 n_gpu: int = 1,
+                 gradient_accumulation_steps: int = 1):
+        self._local_rank = local_rank
+        self._batch_size = batch_size
+        self._n_gpu = n_gpu
+        self._gradient_accumulation_steps = gradient_accumulation_steps
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        exc_args = exc_value.args
+        if exc_args and 'CUDA out of memory' in exc_args[0]:
+            eff_ngpu = get_effective_num_gpus(self._local_rank, self._n_gpu)
+            eff_batch_size = get_effective_batch_size(
+                self._batch_size, self._local_rank, self._n_gpu,
+                self._gradient_accumulation_steps)
+            message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
+                       f"divide each batch over more forward passes.\n\n"
+                       f"\tHyperparameters:\n"
+                       f"\t\tbatch_size per backward-pass: {self._batch_size}\n"
+                       f"\t\tgradient_accumulation_steps: "
+                       f"{self._gradient_accumulation_steps}\n"
+                       f"\t\tn_gpu: {eff_ngpu}\n"
+                       f"\t\tbatch_size per (gpu * forward-pass): "
+                       f"{eff_batch_size}")
+            raise RuntimeError(message)
+        return False
