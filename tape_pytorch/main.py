@@ -88,6 +88,9 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument('--log-dir', default='./logs', type=str)
     parser.add_argument('--no-eval', action='store_true',
                         help='Flag to not run eval pass. Useful for gridsearching.')
+    parser.add_argument('--save-freq', default=1, type=utils.int_or_str,
+                        help="How often to save the model during training. Either an integer "
+                             "frequency or the string 'improvement'")
     return parser
 
 
@@ -174,62 +177,7 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
             "Please install apex from https://www.github.com/nvidia/apex "
             "to use distributed and fp16 training.")
 
-    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
-    args.device = device
-    args.n_gpu = n_gpu
-    args.is_master = is_master
-
-    save_path, exp_name = utils.get_savepath_and_expname(
-        args.output_dir, args.exp_name, args.is_master)
-
-    if args.is_master:
-        # save all the hidden parameters.
-        with (save_path / 'config.json').open('w') as f:
-            json.dump({name: str(val) for name, val in vars(args).items()}, f)
-
-    utils.setup_logging(args.local_rank, save_path)
-    utils.set_random_seeds(args.seed, args.n_gpu)
-
-    logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}, "
-        f"distributed_training: {args.local_rank != -1}, "
-        f"16-bits training: {args.fp16}")
-
-    model = utils.setup_model(
-        args.task, args.from_pretrained, args.model_config_file, args.model_type)
-    optimizer = utils.setup_optimizer(model, args.learning_rate)
-    viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
-
-    if args.fp16:
-        model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
-    if args.local_rank != -1:
-        model = DDP(model)
-    elif args.n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    train_dataset = utils.setup_dataset(args.task, args.data_dir, 'train', args.tokenizer)
-    valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
-    train_loader = utils.setup_loader(
-        args.task, train_dataset, args.batch_size, args.local_rank, args.n_gpu,
-        args.gradient_accumulation_steps, args.num_workers)
-    valid_loader = utils.setup_loader(
-        args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
-        args.gradient_accumulation_steps, args.num_workers)
-
-    num_train_optimization_steps = utils.get_num_train_optimization_steps(
-        train_dataset, args.batch_size, args.num_train_epochs)
-
-    scheduler = WarmupLinearSchedule(
-        optimizer, warmup_steps=args.warmup_steps, t_total=num_train_optimization_steps)
-
-    trainer = training.BackwardRunner(
-        model, optimizer, scheduler, args.device, args.n_gpu, args.fp16, args.max_grad_norm)
-
-    training.run_train(
-        model, trainer, train_dataset, train_loader, valid_dataset, valid_loader,
-        viz, save_path, args.batch_size, args.num_train_epochs, args.local_rank, n_gpu,
-        args.gradient_accumulation_steps, args.num_log_iter, args.no_eval, args.save_freq)
+    training.run_train(**vars(args))
 
 
 def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[str, float]:
@@ -244,29 +192,26 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         raise ValueError("TAPE does not support distributed validation pass")
 
     device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
-    args.device = device
-    args.n_gpu = n_gpu
-    args.is_master = is_master
 
     utils.setup_logging(args.local_rank, save_path=None)
-    utils.set_random_seeds(args.seed, args.n_gpu)
+    utils.set_random_seeds(args.seed, n_gpu)
 
     pretrained_dir = Path(args.from_pretrained)
 
     logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}")
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
 
     model = utils.setup_model(
         args.task, args.from_pretrained, args.model_config_file, args.model_type)
 
-    if args.n_gpu > 1:
+    if n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    runner = training.ForwardRunner(model, args.device, args.n_gpu)
+    runner = training.ForwardRunner(model, device, n_gpu)
     valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
     valid_loader = utils.setup_loader(
-        args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
+        args.task, valid_dataset, args.batch_size, args.local_rank, n_gpu,
         1, args.num_workers)
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
@@ -275,7 +220,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         save_callbacks.append(registry.get_callback('save_predictions'))
     metric_functions = [registry.get_metric(name) for name in args.metrics]
 
-    save_outputs = training.run_eval_epoch(valid_loader, runner, args.is_master, save_callbacks)
+    save_outputs = training.run_eval_epoch(valid_loader, runner, is_master, save_callbacks)
 
     target_key = getattr(model, 'module', model).TARGET_KEY
     prediction_key = getattr(model, 'module', model).PREDICTION_KEY
@@ -302,26 +247,23 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         raise ValueError("TAPE does not support distributed embed pass")
 
     device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
-    args.device = device
-    args.n_gpu = n_gpu
-    args.is_master = is_master
 
     utils.setup_logging(args.local_rank, save_path=None)
-    utils.set_random_seeds(args.seed, args.n_gpu)
+    utils.set_random_seeds(args.seed, n_gpu)
 
     logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}")
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
 
     model = utils.setup_model(
         args.model_type, args.task, args.from_pretrained, args.model_config_file)
 
-    if args.n_gpu > 1:
+    if n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
     dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
     loader = utils.setup_loader(
-        args.task, dataset, args.batch_size, args.local_rank, args.n_gpu, 1, args.num_workers)
+        args.task, dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
 
     torch.set_grad_enabled(False)
     model.eval()
@@ -330,8 +272,8 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
     save_callback = registry.get_callback('save_embedding')
 
     for batch in tqdm(loader, desc='Embedding sequences', total=len(loader),
-                      disable=not args.is_master):
-        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
+                      disable=not is_master):
+        cuda_batch = {name: tensor.cuda(device=device, non_blocking=True)
                       for name, tensor in batch.items()}
         outputs = model(**cuda_batch)
 

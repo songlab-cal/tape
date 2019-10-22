@@ -48,7 +48,6 @@ class UnirepConfig(PretrainedConfig):
                              "or the path to a pretrained model config file (str)")
 
         self.type_vocab_size = 1
-        self.output_size = 2 * self.hidden_size
 
 
 class UnirepPooler(nn.Module):
@@ -103,7 +102,8 @@ class mLSTM(RNNBase):
             hx = (mx, cx)
             hx, cx = self.lstm_cell(seq_input, hx)
             if mask is not None:
-                seqmask = mask[:, seq]
+                seqmask = mask[:, seq].unsqueeze(1)
+                # print(seqmask.shape, hx.shape, prev[0].shape)
                 hx = seqmask * hx + (1 - seqmask) * prev[0]
                 cx = seqmask * cx + (1 - seqmask) * prev[1]
             steps.append(cx)
@@ -165,6 +165,7 @@ class Unirep(PreTrainedModel):
         if token_type_ids is None:
             token_type_ids = torch.zeros_like(input_ids)
 
+        attention_mask = attention_mask.to(dtype=next(self.parameters()).dtype)
         # extended_attention_mask = attention_mask.unsqueeze(2)
         # fp16 compatibility
         # extended_attention_mask = extended_attention_mask.to(
@@ -173,7 +174,7 @@ class Unirep(PreTrainedModel):
         embedding_output = self.embeddings(
             input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
 
-        sequence_output, hidden_states = self.encoder(embedding_output)
+        sequence_output, hidden_states = self.encoder(embedding_output, mask=attention_mask)
         pooled_output = self.pooler(hidden_states)
 
         outputs = (sequence_output, pooled_output,)

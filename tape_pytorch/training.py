@@ -4,6 +4,7 @@ from time import strftime, gmtime
 from timeit import default_timer as timer
 import itertools
 from collections import ChainMap
+import json
 from pathlib import Path
 
 from tqdm import tqdm
@@ -11,12 +12,14 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+from pytorch_transformers import WarmupLinearSchedule
 
 import tape_pytorch.models as models
 import tape_pytorch.utils as utils
 
 try:
     from apex import amp
+    from apex.parallel import DistributedDataParallel as DDP
     APEX_FOUND = True
 except ImportError:
     APEX_FOUND = False
@@ -206,22 +209,81 @@ def run_eval_epoch(eval_loader: DataLoader,
     return output_dict
 
 
-def run_train(model: models.TAPEPreTrainedModel,
-              runner: BackwardRunner,
-              train_dataset: Dataset,
-              train_loader: DataLoader,
-              valid_dataset: Dataset,
-              valid_loader: DataLoader,
-              viz: utils.TBLogger,
-              save_path: Path,
-              batch_size: int,
-              num_train_epochs: int,
-              local_rank: int,
-              n_gpu: int,
-              gradient_accumulation_steps: int = 1,
+def run_train(model_type: str,
+              task: str,
+              learning_rate: float = 1e-4,
+              batch_size: int = 1024,
+              num_train_epochs: int = 10,
               num_log_iter: int = 20,
+              fp16: bool = False,
+              warmup_steps: int = 10000,
+              gradient_accumulation_steps: int = 1,
+              loss_scale: int = 0,
+              max_grad_norm: float = 1.0,
+              exp_name: typing.Optional[str] = None,
+              from_pretrained: typing.Optional[str] = None,
+              log_dir: str = './logs',
               no_eval: bool = False,
-              save_freq: typing.Union[int, str] = 1):
+              save_freq: typing.Union[int, str] = 1,
+              model_config_file: typing.Optional[str] = None,
+              data_dir: str = './data',
+              vocab_file: str = './data/pfam.model',
+              output_dir: str = './results',
+              no_cuda: bool = False,
+              seed: int = 42,
+              local_rank: int = -1,
+              tokenizer: str = 'bpe',
+              num_workers: int = 16,
+              debug: bool = False):
+    input_args = locals()
+    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+
+    save_path, exp_name = utils.get_savepath_and_expname(
+        output_dir, exp_name, is_master)
+
+    if is_master:
+        # save all the hidden parameters.
+        with (save_path / 'config.json').open('w') as f:
+            json.dump(input_args, f)
+
+    utils.setup_logging(local_rank, save_path)
+    utils.set_random_seeds(seed, n_gpu)
+
+    model = utils.setup_model(
+        task, from_pretrained, model_config_file, model_type)
+    optimizer = utils.setup_optimizer(model, learning_rate)
+    viz = utils.TBLogger(log_dir, exp_name, local_rank)
+
+    logger.info(
+        f"device: {device} "
+        f"n_gpu: {n_gpu}, "
+        f"distributed_training: {local_rank != -1}, "
+        f"16-bits training: {fp16}")
+
+    if fp16:
+        model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
+    if local_rank != -1:
+        model = DDP(model)
+    elif n_gpu > 1:
+        model = nn.DataParallel(model)  # type: ignore
+
+    train_dataset = utils.setup_dataset(task, data_dir, 'train', tokenizer)
+    valid_dataset = utils.setup_dataset(task, data_dir, 'valid', tokenizer)
+    train_loader = utils.setup_loader(
+        task, train_dataset, batch_size, local_rank, n_gpu,
+        gradient_accumulation_steps, num_workers)
+    valid_loader = utils.setup_loader(
+        task, valid_dataset, batch_size, local_rank, n_gpu,
+        gradient_accumulation_steps, num_workers)
+
+    num_train_optimization_steps = utils.get_num_train_optimization_steps(
+        train_dataset, batch_size, num_train_epochs)
+
+    scheduler = WarmupLinearSchedule(
+        optimizer, warmup_steps=warmup_steps, t_total=num_train_optimization_steps)
+
+    runner = BackwardRunner(
+        model, optimizer, scheduler, device, n_gpu, fp16, max_grad_norm)
 
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)

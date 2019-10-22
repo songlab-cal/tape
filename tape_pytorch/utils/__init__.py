@@ -1,3 +1,4 @@
+from .utils import int_or_str  # noqa: F401
 from .utils import check_is_file  # noqa: F401
 from .utils import check_is_dir  # noqa: F401
 from .utils import path_to_datetime  # noqa: F401

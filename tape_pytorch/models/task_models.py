@@ -3,8 +3,8 @@ import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from pytorch_transformers.modeling_bert import BertOnlyMLMHead
 from pytorch_transformers.modeling_bert import BertLayerNorm
+from pytorch_transformers.modeling_bert import ACT2FN
 from pytorch_transformers.modeling_utils import PretrainedConfig
 from pytorch_transformers.modeling_utils import PreTrainedModel
 from torch.nn.utils.weight_norm import weight_norm
@@ -61,6 +61,10 @@ class TAPEConfig(PretrainedConfig):
 
         if not hasattr(self, 'hidden_act'):
             self.hidden_act = 'relu'
+        if not hasattr(self, 'output_size'):
+            self.output_size = self.hidden_size
+        if not hasattr(self, 'input_size'):
+            self.input_size = self.hidden_size
 
     @classmethod
     def from_dict(cls, json_object):
@@ -112,6 +116,42 @@ class TAPEPreTrainedModel(PreTrainedModel):
             module.bias.data.zero_()
 
 
+class BertPredictionHeadTransform(nn.Module):
+    def __init__(self, config):
+        super(BertPredictionHeadTransform, self).__init__()
+        self.dense = nn.Linear(config.output_size, config.input_size)
+        if isinstance(config.hidden_act, str):
+            self.transform_act_fn = ACT2FN[config.hidden_act]
+        else:
+            self.transform_act_fn = config.hidden_act
+        self.LayerNorm = BertLayerNorm(config.input_size, eps=config.layer_norm_eps)
+
+    def forward(self, hidden_states):
+        hidden_states = self.dense(hidden_states)
+        hidden_states = self.transform_act_fn(hidden_states)
+        hidden_states = self.LayerNorm(hidden_states)
+        return hidden_states
+
+
+class BertLMPredictionHead(nn.Module):
+    def __init__(self, config):
+        super(BertLMPredictionHead, self).__init__()
+        self.transform = BertPredictionHeadTransform(config)
+
+        # The output weights are the same as the input embeddings, but there is
+        # an output-only bias for each token.
+        self.decoder = nn.Linear(config.input_size,
+                                 config.vocab_size,
+                                 bias=False)
+
+        self.bias = nn.Parameter(torch.zeros(config.vocab_size))
+
+    def forward(self, hidden_states):
+        hidden_states = self.transform(hidden_states)
+        hidden_states = self.decoder(hidden_states) + self.bias
+        return hidden_states
+
+
 @registry.register_task_model('embed')
 class EmbedModel(TAPEPreTrainedModel):
 
@@ -141,12 +181,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
     def __init__(self, config):
         super().__init__(config)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
-        self.classify = BertOnlyMLMHead(config)
-
-        if config.output_size != config.hidden_size:
-            self.project = nn.Linear(config.output_size, config.hidden_size)
-        else:
-            self.project = lambda x: x
+        self.classify = BertLMPredictionHead(config)
 
         self.apply(self.init_weights)
         self.tie_weights()
@@ -155,7 +190,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
         """ Make sure we are sharing the input and output embeddings.
             Export to TorchScript can't handle parameter sharing so we are cloning them instead.
         """
-        self._tie_or_clone_weights(self.classify.predictions.decoder,
+        self._tie_or_clone_weights(self.classify.decoder,
                                    self.base_model.embeddings.word_embeddings)
 
     def forward(self,
@@ -169,7 +204,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, position_ids=None, token_type_ids=None,
                             attention_mask=attention_mask, head_mask=None))
-        prediction_scores = self.classify(self.project(outputs[cls.SEQUENCE_EMBEDDING_KEY]))
+        prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
 
         outputs[cls.PREDICTION_KEY] = prediction_scores
 

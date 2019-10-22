@@ -18,6 +18,13 @@ from tensorboardX import SummaryWriter
 logger = logging.getLogger(__name__)
 
 
+def int_or_str(arg: str) -> typing.Union[int, str]:
+    try:
+        return int(arg)
+    except ValueError:
+        return arg
+
+
 def check_is_file(file_path: str) -> str:
     if file_path is None or os.path.isfile(file_path):
         return file_path
