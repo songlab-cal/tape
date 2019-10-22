@@ -226,30 +226,10 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
     trainer = training.BackwardRunner(
         model, optimizer, scheduler, args.device, args.n_gpu, args.fp16, args.max_grad_norm)
 
-    logger.info("***** Running training *****")
-    logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Batch size = %d", args.batch_size)
-    logger.info("  Num epochs = %d", args.num_train_epochs)
-    logger.info("  Num train steps = %d", num_train_optimization_steps)
-
-    for epoch_id in range(args.num_train_epochs):
-        with utils.wrap_cuda_oom_error(
-                args.local_rank, args.batch_size, args.n_gpu, args.gradient_accumulation_steps):
-            training.run_train_epoch(
-                epoch_id, train_loader, trainer, viz, args.num_log_iter,
-                args.gradient_accumulation_steps)
-            if not args.no_eval:
-                training.run_valid_epoch(epoch_id, valid_loader, trainer, viz, args.is_master)
-
-        # Save trained model
-        if args.is_master and not (args.no_eval and epoch_id + 1 < args.num_train_epochs):
-            logger.info("** ** * Saving trained model ** ** * ")
-            # Only save the model itself
-            output_model_dir = save_path / f"pytorch_model_{epoch_id}"
-            output_model_dir.mkdir()
-            model_to_save = getattr(model, 'module', model)
-            model_to_save.save_pretrained(output_model_dir)
-            logger.info(f"Saving model checkpoint to {output_model_dir}")
+    training.run_train(
+        model, trainer, train_dataset, train_loader, valid_dataset, valid_loader,
+        viz, save_path, args.batch_size, args.num_train_epochs, args.local_rank, n_gpu,
+        args.gradient_accumulation_steps, args.num_log_iter, args.no_eval, args.save_freq)
 
 
 def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[str, float]:
