@@ -11,7 +11,6 @@ import pickle as pkl
 
 import torch
 import torch.nn as nn
-import torch.distributed as dist
 from pytorch_transformers import WarmupLinearSchedule
 
 try:
@@ -32,24 +31,6 @@ OutputDict = typing.Dict[str, typing.List[typing.Any]]
 logger = logging.getLogger(__name__)
 warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
     'ignore', message='Was asked to gather along dimension 0', module='torch.nn.parallel')
-
-
-def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
-    if args.local_rank != -1 and not args.no_cuda:
-        torch.cuda.set_device(args.local_rank)
-        args.device = torch.device("cuda", args.local_rank)
-        args.n_gpu = 1
-        dist.init_process_group(backend="nccl")
-    elif not torch.cuda.is_available() or args.no_cuda:
-        args.device = torch.device("cpu")
-        args.n_gpu = torch.cuda.device_count()
-    else:
-        args.device = torch.device("cuda")
-        args.n_gpu = torch.cuda.device_count()
-
-    args.is_master = args.local_rank in (-1, 0)
-
-    return args
 
 
 def create_base_parser() -> argparse.ArgumentParser:
@@ -193,7 +174,10 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
             "Please install apex from https://www.github.com/nvidia/apex "
             "to use distributed and fp16 training.")
 
-    args = setup_distributed(args)
+    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    args.device = device
+    args.n_gpu = n_gpu
+    args.is_master = is_master
 
     save_path, exp_name = utils.get_savepath_and_expname(
         args.output_dir, args.exp_name, args.is_master)
@@ -212,9 +196,9 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
         f"distributed_training: {args.local_rank != -1}, "
         f"16-bits training: {args.fp16}")
 
-    model = training.setup_model(
+    model = utils.setup_model(
         args.task, args.from_pretrained, args.model_config_file, args.model_type)
-    optimizer = training.setup_optimizer(model, args.learning_rate)
+    optimizer = utils.setup_optimizer(model, args.learning_rate)
     viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
 
     if args.fp16:
@@ -224,12 +208,12 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
     elif args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    train_dataset = training.setup_dataset(args.task, args.data_dir, 'train', args.tokenizer)
-    valid_dataset = training.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
-    train_loader = training.setup_loader(
+    train_dataset = utils.setup_dataset(args.task, args.data_dir, 'train', args.tokenizer)
+    valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    train_loader = utils.setup_loader(
         args.task, train_dataset, args.batch_size, args.local_rank, args.n_gpu,
         args.gradient_accumulation_steps, args.num_workers)
-    valid_loader = training.setup_loader(
+    valid_loader = utils.setup_loader(
         args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
         args.gradient_accumulation_steps, args.num_workers)
 
@@ -295,7 +279,11 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
-    args = setup_distributed(args)
+    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    args.device = device
+    args.n_gpu = n_gpu
+    args.is_master = is_master
+
     utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 
@@ -305,15 +293,15 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
 
-    model = training.setup_model(
+    model = utils.setup_model(
         args.task, args.from_pretrained, args.model_config_file, args.model_type)
 
     if args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
     runner = training.ForwardRunner(model, args.device, args.n_gpu)
-    valid_dataset = training.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
-    valid_loader = training.setup_loader(
+    valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    valid_loader = utils.setup_loader(
         args.task, valid_dataset, args.batch_size, args.local_rank, args.n_gpu,
         1, args.num_workers)
 
@@ -349,7 +337,11 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed embed pass")
 
-    args = setup_distributed(args)
+    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    args.device = device
+    args.n_gpu = n_gpu
+    args.is_master = is_master
+
     utils.setup_logging(args.local_rank, save_path=None)
     utils.set_random_seeds(args.seed, args.n_gpu)
 
@@ -357,14 +349,14 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         f"device: {args.device} "
         f"n_gpu: {args.n_gpu}")
 
-    model = training.setup_model(
+    model = utils.setup_model(
         args.model_type, args.task, args.from_pretrained, args.model_config_file)
 
     if args.n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
-    dataset = training.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
-    loader = training.setup_loader(
+    dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
+    loader = utils.setup_loader(
         args.task, dataset, args.batch_size, args.local_rank, args.n_gpu, 1, args.num_workers)
 
     torch.set_grad_enabled(False)
@@ -497,7 +489,8 @@ def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -
             setattr(run_args, key, arg)
         run_train(copy(run_args))
         run_args.from_pretrained = os.path.join(
-            run_args.output_dir, run_args.exp_name, f'pytorch_model_{run_args.num_train_epochs - 1}')
+            run_args.output_dir, run_args.exp_name,
+            f'pytorch_model_{run_args.num_train_epochs - 1}')
         metrics = run_eval(copy(run_args))
         results.append((grid_args, metrics))
         shutil.rmtree(run_args.from_pretrained)
@@ -507,7 +500,8 @@ def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -
         print(metrics)
         print()
 
-    with open(os.path.join(args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
+    with open(os.path.join(
+            args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
         pkl.dump(results, f)
 
 

@@ -1,6 +1,5 @@
 import typing
 import random
-import sys
 from pathlib import Path
 import logging
 from time import strftime, gmtime
@@ -30,28 +29,6 @@ def check_is_dir(dir_path: str) -> str:
         return dir_path
     else:
         raise argparse.ArgumentTypeError(f"Directory path: {dir_path} is not a valid directory")
-
-
-def setup_logging(local_rank: int, save_path: typing.Optional[Path] = None) -> None:
-    log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
-    root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
-
-    formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
-        datefmt="%y/%m/%d %H:%M:%S")
-
-    if not root_logger.hasHandlers():
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(log_level)
-        console_handler.setFormatter(formatter)
-        root_logger.addHandler(console_handler)
-
-        if save_path is not None:
-            file_handler = logging.FileHandler(save_path / 'log')
-            file_handler.setLevel(log_level)
-            file_handler.setFormatter(formatter)
-            root_logger.addHandler(file_handler)
 
 
 def path_to_datetime(path: Path) -> datetime:
