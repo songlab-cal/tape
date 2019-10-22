@@ -1,7 +1,5 @@
-from typing import Optional, Tuple, Type, Callable, Sequence, List, Dict, Any
+import typing
 import os
-from time import strftime, gmtime
-from timeit import default_timer as timer
 import logging
 from pathlib import Path
 import json
@@ -9,15 +7,10 @@ import itertools
 from tqdm import tqdm
 import argparse
 import warnings
-from collections import ChainMap
 import pickle as pkl
 
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, RandomSampler
-from torch.utils.data.distributed import DistributedSampler
-from pytorch_transformers.modeling_utils import PreTrainedModel
-from pytorch_transformers import AdamW
 from pytorch_transformers import WarmupLinearSchedule
 
 try:
@@ -28,242 +21,16 @@ except ImportError:
     APEX_FOUND = False
 
 from tape_pytorch.registry import registry
-from tape_pytorch.models.task_models import TAPEConfig
-from tape_pytorch.trainer import Trainer
+import tape_pytorch.training as training
 import tape_pytorch.utils as utils
-from tape_pytorch.datasets import TAPEDataset
+
+CallbackList = typing.Sequence[typing.Callable]
+OutputDict = typing.Dict[str, typing.List[typing.Any]]
 
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
     'ignore', message='Was asked to gather along dimension 0', module='torch.nn.parallel')
-
-
-def setup_model(model_type: str,
-                task: str,
-                from_pretrained: Optional[str],
-                model_config_file: Optional[str]):
-
-    model_cls = registry.get_task_model_class(task)
-    if from_pretrained is not None:
-        assert model_config_file is None
-        load_dir = Path(from_pretrained)
-        model = model_cls.from_pretrained(load_dir)
-    else:
-        if model_config_file is not None:
-            config = TAPEConfig.from_json_file(model_config_file)
-        else:
-            base_config = registry.get_model_class(model_type).config_class()
-            config = TAPEConfig(base_config, base_model=model_type)
-        model = model_cls(config)
-
-    model.cuda()
-
-    return model
-
-
-def setup_optimizer(model: PreTrainedModel,
-                    learning_rate: float):
-
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
-    param_optimizer = list(model.named_parameters())
-    optimizer_grouped_parameters = [
-        {
-            "params": [
-                p for n, p in param_optimizer if not any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.01,
-        },
-        {
-            "params": [
-                p for n, p in param_optimizer if any(nd in n for nd in no_decay)
-            ],
-            "weight_decay": 0.0,
-        },
-    ]
-
-    optimizer = AdamW(optimizer_grouped_parameters, lr=learning_rate)
-
-    return optimizer
-
-
-def setup_distributed(args: argparse.Namespace) -> argparse.Namespace:
-    if args.local_rank != -1 and not args.no_cuda:
-        torch.cuda.set_device(args.local_rank)
-        args.device = torch.device("cuda", args.local_rank)
-        args.n_gpu = 1
-        torch.distributed.init_process_group(backend="nccl")
-    elif not torch.cuda.is_available() or args.no_cuda:
-        args.device = torch.device("cpu")
-        args.n_gpu = torch.cuda.device_count()
-    else:
-        args.device = torch.device("cuda")
-        args.n_gpu = torch.cuda.device_count()
-
-    args.is_master = args.local_rank in (-1, 0)
-
-    return args
-
-
-def get_effective_num_gpus(args: argparse.Namespace) -> int:
-    if args.local_rank == -1:
-        num_gpus = args.n_gpu
-    else:
-        num_gpus = torch.distributed.get_world_size()
-    return num_gpus
-
-
-def get_effective_batch_size(args: argparse.Namespace) -> int:
-    batch_size = float(args.batch_size)
-    batch_size /= getattr(args, 'gradient_accumulation_steps', 1)
-    batch_size /= get_effective_num_gpus(args)
-    return int(batch_size)
-
-
-def setup_dataset_and_loader(args: argparse.Namespace,
-                             dataset_type: str) -> Tuple[TAPEDataset, DataLoader]:
-
-    dataset_class: Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
-        args.task)
-    collate_fn_cls = registry.get_collate_fn_class(args.task)
-    sampler_type = (DistributedSampler if args.local_rank != -1 else RandomSampler)
-
-    dataset = dataset_class(args.data_dir, dataset_type, args.tokenizer)
-
-    loader = DataLoader(  # type: ignore
-        dataset,
-        batch_size=get_effective_batch_size(args),
-        num_workers=args.num_workers,
-        collate_fn=collate_fn_cls(),
-        sampler=sampler_type(dataset))
-
-    return dataset, loader
-
-
-def get_num_train_optimization_steps(train_dataset: TAPEDataset,
-                                     args: argparse.Namespace) -> int:
-    return int(len(train_dataset) / args.batch_size * args.num_train_epochs)
-
-
-def run_train_epoch(epoch_id: int,
-                    train_loader: DataLoader,
-                    trainer: Trainer,
-                    viz: utils.TBLogger,
-                    args: argparse.Namespace) -> None:
-    metrics = utils.MetricsAccumulator(smoothing=1 - 1 / args.num_log_iter)
-
-    torch.set_grad_enabled(True)
-    trainer.model.train()
-
-    start_t = timer()
-
-    if args.debug:
-        train_loader = itertools.islice(train_loader, 10)  # type: ignore
-
-    loss_tmp = 0.
-    for step, batch in enumerate(train_loader):
-        loss = trainer.forward(batch)
-        loss /= args.gradient_accumulation_steps
-        loss_tmp += loss.item()
-        trainer.backward(loss)
-
-        if (step + 1) % args.gradient_accumulation_steps == 0:
-            trainer.step()
-            metrics.update(loss_tmp)
-            viz.line_plot(trainer.global_step, loss_tmp, "loss", "train")
-            loss_tmp = 0.
-
-            if trainer.global_step % args.num_log_iter == 0:
-                end_t = timer()
-                time_stamp = strftime("%y-%m-%d %X", gmtime())
-                ep = epoch_id + step / float(len(train_loader))
-                print_str = [
-                    f"[{time_stamp}]",
-                    f"[Ep: {ep:.2f}]",
-                    f"[Iter: {trainer.global_step}]",
-                    f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {metrics.loss():.5g}]",
-                    f"[LR: {trainer.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
-                start_t = end_t
-
-                logger.info(''.join(print_str))
-
-    logger.info(f"Train: [Loss: {metrics.final_loss():.5g}]")
-
-
-def run_valid_epoch(epoch_id: int,
-                    valid_loader: DataLoader,
-                    trainer: Trainer,
-                    viz: utils.TBLogger,
-                    args: argparse.Namespace) -> None:
-    num_batches = len(valid_loader)
-    eval_loss = 0.
-
-    torch.set_grad_enabled(False)
-    trainer.model.eval()
-
-    if args.debug:
-        valid_loader = itertools.islice(valid_loader, 10)  # type: ignore
-
-    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches,
-                      disable=not args.is_master):
-        loss = trainer.forward(batch)
-        eval_loss += loss.item()
-
-    eval_loss /= num_batches
-
-    print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-
-    logger.info(print_str)
-    viz.line_plot(epoch_id, eval_loss, "loss", "val")
-
-
-def run_eval_epoch(eval_loader: DataLoader,
-                   model: nn.Module,
-                   args: argparse.Namespace,
-                   save_callback: Optional[Sequence[Callable]] = None) \
-        -> Dict[str, List[Any]]:
-    num_batches = len(eval_loader)
-    eval_loss = 0.
-    loss_key = getattr(model, 'module', model).LOSS_KEY
-
-    torch.set_grad_enabled(False)
-    model.eval()
-
-    save_outputs = []
-
-    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches,
-                      disable=not args.is_master):
-        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
-                      for name, tensor in batch.items()}
-        outputs = model(**cuda_batch)
-        loss = outputs[loss_key]
-
-        if args.n_gpu > 1:
-            loss = loss.mean()
-
-        if save_callback is not None:
-            to_save = dict(ChainMap(
-                *(callback(model, batch, outputs) for callback in save_callback)))
-            save_outputs.append(to_save)
-
-        eval_loss += loss.item()
-
-    eval_loss /= num_batches
-
-    print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-
-    logger.info(print_str)
-
-    if len(save_outputs) > 0:
-        keys = save_outputs[0].keys()
-        output_dict = {
-            key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-            for key in keys}
-    else:
-        output_dict = {}
-
-    return output_dict
 
 
 def create_base_parser() -> argparse.ArgumentParser:
@@ -321,6 +88,9 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument('--log-dir', default='./logs', type=str)
     parser.add_argument('--no-eval', action='store_true',
                         help='Flag to not run eval pass. Useful for gridsearching.')
+    parser.add_argument('--save-freq', default=1, type=utils.int_or_str,
+                        help="How often to save the model during training. Either an integer "
+                             "frequency or the string 'improvement'")
     return parser
 
 
@@ -347,8 +117,9 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
 
 
 def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description='Embed a set of proteins wiht a pretrained model',
-                                     parents=[base_parser])
+    parser = argparse.ArgumentParser(
+        description='Embed a set of proteins wiht a pretrained model',
+        parents=[base_parser])
     parser.add_argument('datafile', type=str,
                         help='File containing set of proteins to embed')
     parser.add_argument('outfile', type=str,
@@ -363,7 +134,7 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
 
 def create_distributed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False, parents=[base_parser])
-    # Optional arguments for the launch helper
+    # typing.Optional arguments for the launch helper
     parser.add_argument("--nnodes", type=int, default=1,
                         help="The number of nodes to use for distributed "
                              "training")
@@ -387,7 +158,7 @@ def create_distributed_parser(base_parser: argparse.ArgumentParser) -> argparse.
     return parser
 
 
-def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
+def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
     if env is not None:
         os.environ = env
 
@@ -406,84 +177,10 @@ def run_train(args: Optional[argparse.Namespace] = None, env=None) -> None:
             "Please install apex from https://www.github.com/nvidia/apex "
             "to use distributed and fp16 training.")
 
-    args = setup_distributed(args)
-
-    save_path, exp_name = utils.get_savepath_and_expname(
-        args.output_dir, args.exp_name, args.is_master)
-
-    if args.is_master:
-        # save all the hidden parameters.
-        with (save_path / 'config.json').open('w') as f:
-            json.dump({name: str(val) for name, val in vars(args).items()}, f)
-
-    utils.setup_logging(args.local_rank, save_path)
-    utils.set_random_seeds(args.seed, args.n_gpu)
-
-    logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}, "
-        f"distributed_training: {args.local_rank != -1}, "
-        f"16-bits training: {args.fp16}")
-
-    model = setup_model(
-        args.model_type, args.task, args.from_pretrained, args.model_config_file)
-    optimizer = setup_optimizer(model, args.learning_rate)
-    viz = utils.TBLogger(args.log_dir, exp_name, args.local_rank)
-
-    if args.fp16:
-        model, optimizer = amp.initialize(model, optimizer, opt_level="O2")
-    if args.local_rank != -1:
-        model = DDP(model)
-    elif args.n_gpu > 1:
-        model = nn.DataParallel(model)
-
-    train_dataset, train_loader = setup_dataset_and_loader(args, 'train')
-    valid_dataset, valid_loader = setup_dataset_and_loader(args, 'valid')
-
-    num_train_optimization_steps = get_num_train_optimization_steps(train_dataset, args)
-
-    scheduler = WarmupLinearSchedule(
-        optimizer, warmup_steps=args.warmup_steps, t_total=num_train_optimization_steps)
-
-    trainer = Trainer(model, optimizer, scheduler, args)
-
-    logger.info("***** Running training *****")
-    logger.info("  Num examples = %d", len(train_dataset))
-    logger.info("  Batch size = %d", args.batch_size)
-    logger.info("  Num epochs = %d", args.num_train_epochs)
-    logger.info("  Num train steps = %d", num_train_optimization_steps)
-
-    for epoch_id in range(args.num_train_epochs):
-        try:
-            run_train_epoch(epoch_id, train_loader, trainer, viz, args)
-            if not args.no_eval:
-                run_valid_epoch(epoch_id, valid_loader, trainer, viz, args)
-        except RuntimeError as e:
-            if 'CUDA out of memory' in e.args[0]:
-                message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
-                           f"divide each batch over more forward passes.\n\n"
-                           f"\tHyperparameters:\n"
-                           f"\t\tbatch_size per backward-pass: {args.batch_size}\n"
-                           f"\t\tgradient_accumulation_steps: "
-                           f"{args.gradient_accumulation_steps}\n"
-                           f"\t\tn_gpu: {get_effective_num_gpus(args)}\n"
-                           f"\t\tbatch_size per (gpu * forward-pass): "
-                           f"{get_effective_batch_size(args)}")
-                raise RuntimeError(message).with_traceback(e.__traceback__)
-            raise
-
-        # Save trained model
-        if args.is_master and not (args.no_eval and epoch_id + 1 < args.num_train_epochs):
-            logger.info("** ** * Saving trained model ** ** * ")
-            # Only save the model itself
-            output_model_dir = save_path / f"pytorch_model_{epoch_id}"
-            output_model_dir.mkdir()
-            model_to_save = getattr(model, 'module', model)
-            model_to_save.save_pretrained(output_model_dir)
-            logger.info(f"Saving model checkpoint to {output_model_dir}")
+    training.run_train(**vars(args))
 
 
-def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
+def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[str, float]:
     if args is None:
         base_parser = create_base_parser()
         parser = create_eval_parser(base_parser)
@@ -494,23 +191,28 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
-    args = setup_distributed(args)
+    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+
     utils.setup_logging(args.local_rank, save_path=None)
-    utils.set_random_seeds(args.seed, args.n_gpu)
+    utils.set_random_seeds(args.seed, n_gpu)
 
     pretrained_dir = Path(args.from_pretrained)
 
     logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}")
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
 
-    model = setup_model(
-        args.model_type, args.task, args.from_pretrained, args.model_config_file)
+    model = utils.setup_model(
+        args.task, args.from_pretrained, args.model_config_file, args.model_type)
 
-    if args.n_gpu > 1:
-        model = nn.DataParallel(model)
+    if n_gpu > 1:
+        model = nn.DataParallel(model)  # type: ignore
 
-    valid_dataset, valid_loader = setup_dataset_and_loader(args, args.split)
+    runner = training.ForwardRunner(model, device, n_gpu)
+    valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    valid_loader = utils.setup_loader(
+        args.task, valid_dataset, args.batch_size, args.local_rank, n_gpu,
+        1, args.num_workers)
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
 
@@ -518,7 +220,7 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
         save_callbacks.append(registry.get_callback('save_predictions'))
     metric_functions = [registry.get_metric(name) for name in args.metrics]
 
-    save_outputs = run_eval_epoch(valid_loader, model, args, save_callbacks)
+    save_outputs = training.run_eval_epoch(valid_loader, runner, is_master, save_callbacks)
 
     target_key = getattr(model, 'module', model).TARGET_KEY
     prediction_key = getattr(model, 'module', model).PREDICTION_KEY
@@ -533,7 +235,7 @@ def run_eval(args: Optional[argparse.Namespace] = None) -> Dict[str, float]:
     return metrics
 
 
-def run_embed(args: Optional[argparse.Namespace] = None) -> None:
+def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
     if args is None:
         base_parser = create_base_parser()
         parser = create_embed_parser(base_parser)
@@ -544,21 +246,24 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed embed pass")
 
-    args = setup_distributed(args)
+    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+
     utils.setup_logging(args.local_rank, save_path=None)
-    utils.set_random_seeds(args.seed, args.n_gpu)
+    utils.set_random_seeds(args.seed, n_gpu)
 
     logger.info(
-        f"device: {args.device} "
-        f"n_gpu: {args.n_gpu}")
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
 
-    model = setup_model(
+    model = utils.setup_model(
         args.model_type, args.task, args.from_pretrained, args.model_config_file)
 
-    if args.n_gpu > 1:
-        model = nn.DataParallel(model)
+    if n_gpu > 1:
+        model = nn.DataParallel(model)  # type: ignore
 
-    dataset, loader = setup_dataset_and_loader(args, args.datafile)
+    dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
+    loader = utils.setup_loader(
+        args.task, dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
 
     torch.set_grad_enabled(False)
     model.eval()
@@ -567,8 +272,8 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
     save_callback = registry.get_callback('save_embedding')
 
     for batch in tqdm(loader, desc='Embedding sequences', total=len(loader),
-                      disable=not args.is_master):
-        cuda_batch = {name: tensor.cuda(device=args.device, non_blocking=True)
+                      disable=not is_master):
+        cuda_batch = {name: tensor.cuda(device=device, non_blocking=True)
                       for name, tensor in batch.items()}
         outputs = model(**cuda_batch)
 
@@ -584,12 +289,12 @@ def run_embed(args: Optional[argparse.Namespace] = None) -> None:
         pkl.dump(output_dict, f)
 
 
-def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
+def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
     """Runs distributed training via multiprocessing. Mostly ripped from
     pytorch's torch.distributed.launch, modified to be easy to use for
     tape.
     """
-    from multiprocessing import Process, ProcessError
+    from multiprocessing import Process
     import time
 
     if args is None:
@@ -646,7 +351,7 @@ def run_train_distributed(args: Optional[argparse.Namespace] = None) -> None:
             # raise ProcessError(f"Process failed with exitcode {process.exitcode}")
 
 
-def run_gridsearch(args: Optional[argparse.Namespace] = None, env=None) -> None:
+def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
     import random
     from itertools import product
     from copy import copy
@@ -690,7 +395,8 @@ def run_gridsearch(args: Optional[argparse.Namespace] = None, env=None) -> None:
             setattr(run_args, key, arg)
         run_train(copy(run_args))
         run_args.from_pretrained = os.path.join(
-            run_args.output_dir, run_args.exp_name, f'pytorch_model_{run_args.num_train_epochs - 1}')
+            run_args.output_dir, run_args.exp_name,
+            f'pytorch_model_{run_args.num_train_epochs - 1}')
         metrics = run_eval(copy(run_args))
         results.append((grid_args, metrics))
         shutil.rmtree(run_args.from_pretrained)
@@ -700,7 +406,8 @@ def run_gridsearch(args: Optional[argparse.Namespace] = None, env=None) -> None:
         print(metrics)
         print()
 
-    with open(os.path.join(args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
+    with open(os.path.join(
+            args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
         pkl.dump(results, f)
 
 

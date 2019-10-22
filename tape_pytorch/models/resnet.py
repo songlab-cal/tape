@@ -223,7 +223,7 @@ class ResNetPooler(nn.Module):
         self.dense = nn.Linear(config.output_size, config.output_size)
         self.activation = nn.Tanh()
 
-    def forward(self, hidden_states):
+    def forward(self, hidden_states, mask=None):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
         first_token_tensor = hidden_states[:, 0]
@@ -347,7 +347,12 @@ class ResNet(PreTrainedModel):
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, position_ids=None, head_mask=None):
+    def forward(self,
+                input_ids,
+                token_type_ids=None,
+                attention_mask=None,
+                position_ids=None,
+                head_mask=None):
         if attention_mask is None:
             attention_mask = torch.ones_like(input_ids)
         if token_type_ids is None:
