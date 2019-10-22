@@ -1,4 +1,4 @@
-from typing import Optional, Sequence, Dict
+import typing
 import json
 import torch
 import torch.nn as nn
@@ -11,17 +11,17 @@ from torch.nn.utils.weight_norm import weight_norm
 
 from tape_pytorch.registry import registry
 
-from .base_models import Transformer, Bepler, UniRep
+from .transformer import Transformer
 from .resnet import ResNet
 from .lstm import LSTM
+from .unirep import Unirep
 
 
 BASE_MODEL_CLASSES = {
     'transformer': Transformer,
     'resnet': ResNet,
     'lstm': LSTM,
-    'unirep': UniRep,
-    'bepler': Bepler}
+    'unirep': Unirep}
 
 
 class TAPEConfig(PretrainedConfig):
@@ -81,8 +81,8 @@ class TAPEPreTrainedModel(PreTrainedModel):
     config_class = TAPEConfig
     base_model_prefix = "base_model"
 
-    def _convert_outputs_to_dictionary(self, outputs: Sequence[torch.Tensor]) \
-            -> Dict[str, torch.Tensor]:
+    def _convert_outputs_to_dictionary(self, outputs: typing.Sequence[torch.Tensor]) \
+            -> typing.Dict[str, torch.Tensor]:
         cls = self.__class__
         dict_outputs = {}
         dict_outputs[cls.SEQUENCE_EMBEDDING_KEY] = outputs[0]

@@ -1,7 +1,6 @@
 import json
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
 from pytorch_transformers.modeling_bert import BertLayerNorm

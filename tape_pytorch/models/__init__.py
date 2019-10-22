@@ -1,9 +1,8 @@
 import typing
 from pathlib import Path
 
-from .base_models import Bepler  # noqa: F401
-from .base_models import Transformer  # noqa: F401
-from .base_models import UniRep  # noqa: F401
+from .transformer import Transformer  # noqa: F401
+from .unirep import Unirep  # noqa: F401
 from .resnet import ResNet  # noqa: F401
 from .lstm import LSTM  # noqa: F401
 from .task_models import TAPEConfig  # noqa: F401

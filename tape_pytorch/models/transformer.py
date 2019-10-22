@@ -1,5 +1,4 @@
 import json
-from pytorch_transformers.modeling_utils import PreTrainedModel
 from pytorch_transformers.modeling_utils import PretrainedConfig
 from pytorch_transformers.modeling_bert import BertModel
 
@@ -77,13 +76,3 @@ class TransformerConfig(PretrainedConfig):
 Transformer = BertModel
 Transformer.config_class = TransformerConfig
 registry.register_model('transformer')(Transformer)
-
-
-@registry.register_model('unirep')
-class UniRep(PreTrainedModel):
-    pass
-
-
-@registry.register_model('bepler')
-class Bepler(PreTrainedModel):
-    pass
