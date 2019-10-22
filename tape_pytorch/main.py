@@ -11,11 +11,9 @@ import pickle as pkl
 
 import torch
 import torch.nn as nn
-from pytorch_transformers import WarmupLinearSchedule
 
 try:
-    from apex import amp
-    from apex.parallel import DistributedDataParallel as DDP
+    import apex  # noqa: F401
     APEX_FOUND = True
 except ImportError:
     APEX_FOUND = False
@@ -177,7 +175,17 @@ def run_train(args: typing.Optional[argparse.Namespace] = None, env=None) -> Non
             "Please install apex from https://www.github.com/nvidia/apex "
             "to use distributed and fp16 training.")
 
-    training.run_train(**vars(args))
+    training.run_train(
+        model_type=args.model_type, task=args.task, learning_rate=args.learning_rate,
+        batch_size=args.batch_size, num_train_epochs=args.num_train_epochs,
+        num_log_iter=args.num_log_iter, fp16=args.fp16, warmup_steps=args.warmup_steps,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        loss_scale=args.loss_scale, max_grad_norm=args.max_grad_norm, exp_name=args.exp_name,
+        from_pretrained=args.from_pretrained, log_dir=args.log_dir, no_eval=args.no_eval,
+        save_freq=args.save_freq, model_config_file=args.model_config_file,
+        data_dir=args.data_dir, vocab_file=args.vocab_file, output_dir=args.output_dir,
+        no_cuda=args.no_cuda, seed=args.seed, local_rank=args.local_rank,
+        tokenizer=args.tokenizer, num_workers=args.num_workers, debug=args.debug)
 
 
 def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[str, float]:

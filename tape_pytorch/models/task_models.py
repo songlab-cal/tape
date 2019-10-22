@@ -302,8 +302,6 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
     def __init__(self, config, num_classes: int):
         super().__init__(config)
-        if config.num_classes is None:
-            raise ValueError("Must pass value for num_classes")
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(
             config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
