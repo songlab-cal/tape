@@ -152,13 +152,13 @@ class MetricsAccumulator:
 
 
 class wrap_cuda_oom_error(contextlib.ContextDecorator):
-    """A context manager that wraps the Cuda OOM message so that you get some more helpful context
-    as to what you can/should change. Can also be used as a decorator.
+    """A context manager that wraps the Cuda OOM message so that you get some more helpful
+    context as to what you can/should change. Can also be used as a decorator.
 
     Examples:
         1) As a context manager:
 
-            with wrap_cuda_oom_error():
+            with wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation):
                 loss = model.forward(batch)
                 loss.backward()
                 optimizer.step()
@@ -166,7 +166,7 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
 
         2) As a decorator:
 
-            @wrap_cuda_oom_error
+            @wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation)
             def run_train_epoch(args):
                 ...
                 <code to run training epoch>
