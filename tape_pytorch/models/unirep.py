@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.nn.modules.rnn import RNNBase, LSTMCell
 
 from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
-from pytorch_transformers.modeling_bert import BertEmbeddings
+from pytorch_transformers.modeling_bert import BertLayerNorm
 
 from tape_pytorch.registry import registry
 
@@ -58,15 +58,13 @@ class UnirepPooler(nn.Module):
         self.dense = nn.Linear(
             config.hidden_size, config.output_size)
         self.activation = nn.Tanh()
-        self.num_hidden_layers = config.num_hidden_layers
         self.hidden_size = config.hidden_size
 
     def forward(self, hidden_states):
         h_out, c_out = hidden_states
 
         # Permute things around
-        # h_out = h_out.view(self.num_hidden_layers, 2, -1, self.hidden_size)
-        h_out = h_out.transpose(1, 0).reshape(-1, 2 * self.num_hidden_layers * self.hidden_size)
+        # h_out = h_out.transpose(1, 0).reshape(-1, self.hidden_size)
         x = self.dense(h_out)
         x = self.activation(x)
         return x
@@ -78,11 +76,11 @@ class mLSTM(RNNBase):
     def __init__(self, config):
         super().__init__(mode='LSTM', input_size=config.input_size,
                          hidden_size=config.hidden_size,
-                         num_layers=1, bias=config.use_bias, batch_first=True,
-                         dropout=config.dropout, bidirectional=False)
+                         num_layers=1, bias=True, batch_first=True,
+                         dropout=config.hidden_dropout_prob, bidirectional=False)
         self.input_project = nn.Linear(config.input_size, config.hidden_size)
         self.hidden_project = nn.Linear(config.hidden_size, config.hidden_size)
-        self.lstm_cell = LSTMCell(config.input_size, config.hidden_size, config.use_bias)
+        self.lstm_cell = LSTMCell(config.input_size, config.hidden_size, bias=True)
 
         self.hidden_size = config.hidden_size
 
@@ -113,17 +111,47 @@ class mLSTM(RNNBase):
         return torch.stack(steps, 1), (hx, cx)
 
 
+class UnirepEmbeddings(nn.Module):
+    """Construct the embeddings from word, position and token_type embeddings.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.word_embeddings = nn.Embedding(
+            config.vocab_size, config.input_size, padding_idx=0)
+        self.position_embeddings = nn.Embedding(
+            config.max_position_embeddings, config.input_size)
+        self.token_type_embeddings = nn.Embedding(
+            config.type_vocab_size, config.input_size)
+
+        self.LayerNorm = BertLayerNorm(config.input_size, eps=config.layer_norm_eps)
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+
+    def forward(self, input_ids, token_type_ids=None, position_ids=None):
+        seq_length = input_ids.size(1)
+        if position_ids is None:
+            position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)
+            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+        if token_type_ids is None:
+            token_type_ids = torch.zeros_like(input_ids)
+
+        words_embeddings = self.word_embeddings(input_ids)
+        position_embeddings = self.position_embeddings(position_ids)
+        token_type_embeddings = self.token_type_embeddings(token_type_ids)
+
+        embeddings = words_embeddings + position_embeddings + token_type_embeddings
+        embeddings = self.LayerNorm(embeddings)
+        embeddings = self.dropout(embeddings)
+        return embeddings
+
+
 @registry.register_model('unirep')
 class Unirep(PreTrainedModel):
     config_class = UnirepConfig
 
     def __init__(self, config: UnirepConfig):
         super().__init__(config)
-        self.embeddings = BertEmbeddings(config)
-        self.encoder = nn.LSTM(
-            config.hidden_size, config.hidden_size, config.num_hidden_layers,
-            batch_first=True, bidirectional=True, dropout=config.hidden_dropout_prob)
-        self.encoder.flatten_parameters()
+        self.embeddings = UnirepEmbeddings(config)
+        self.encoder = mLSTM(config)
         self.pooler = UnirepPooler(config)
 
     def forward(self,
