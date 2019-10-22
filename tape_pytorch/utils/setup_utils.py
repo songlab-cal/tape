@@ -142,7 +142,7 @@ def setup_distributed(local_rank: int,
                       no_cuda: bool) -> typing.Tuple[torch.device, int, bool]:
     if local_rank != -1 and not no_cuda:
         torch.cuda.set_device(local_rank)
-        device = torch.device("cuda", local_rank)
+        device: torch.device = torch.device("cuda", local_rank)
         n_gpu = 1
         dist.init_process_group(backend="nccl")
     elif not torch.cuda.is_available() or no_cuda:
