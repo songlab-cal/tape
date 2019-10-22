@@ -303,8 +303,9 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
     def __init__(self, config, num_classes: int):
         super().__init__(config)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
-        self.predict = SimpleMLP(
-            config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
+        # self.predict = SimpleMLP(
+            # config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
+        self.predict = SimpleConv(config.hidden_size, 128, num_classes, 0.5)
 
         self.apply(self.init_weights)
 
@@ -371,3 +372,19 @@ class SimpleMLP(nn.Module):
 
     def forward(self, x):
         return self.main(x)
+
+
+class SimpleConv(nn.Module):
+    def __init__(self, in_dim, hid_dim, out_dim, dropout):
+        super().__init__()
+        self.main = nn.Sequential(
+            nn.Conv1d(in_dim, hid_dim, 5, padding=2),
+            nn.ReLU(),
+            nn.Dropout(dropout, inplace=True),
+            nn.Conv1d(hid_dim, out_dim, 3, padding=1))
+
+    def forward(self, x):
+        x = x.transpose(1, 2)
+        x = self.main(x)
+        x = x.transpose(1, 2).contiguous()
+        return x
