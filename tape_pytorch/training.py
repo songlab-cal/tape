@@ -4,13 +4,15 @@ from time import strftime, gmtime
 from timeit import default_timer as timer
 import itertools
 from collections import ChainMap
+from pathlib import Path
 
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import Dataset, DataLoader
 
+import tape_pytorch.models as models
 import tape_pytorch.utils as utils
 
 try:
@@ -103,7 +105,7 @@ def run_train_epoch(epoch_id: int,
                     runner: BackwardRunner,
                     viz: utils.TBLogger,
                     num_log_iter: int = 20,
-                    gradient_accumulation_steps: int = 1) -> None:
+                    gradient_accumulation_steps: int = 1) -> float:
     metrics = utils.MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
 
     torch.set_grad_enabled(True)
@@ -138,15 +140,15 @@ def run_train_epoch(epoch_id: int,
                 start_t = end_t
 
                 logger.info(''.join(print_str))
-
     logger.info(f"Train: [Loss: {metrics.final_loss():.5g}]")
+    return metrics.final_loss()
 
 
 def run_valid_epoch(epoch_id: int,
                     valid_loader: DataLoader,
                     runner: ForwardRunner,
                     viz: utils.TBLogger,
-                    is_master: bool = True) -> None:
+                    is_master: bool = True) -> float:
     num_batches = len(valid_loader)
     eval_loss = 0.
 
@@ -164,6 +166,8 @@ def run_valid_epoch(epoch_id: int,
 
     logger.info(print_str)
     viz.line_plot(epoch_id, eval_loss, "loss", "val")
+
+    return eval_loss
 
 
 def run_eval_epoch(eval_loader: DataLoader,
@@ -200,3 +204,72 @@ def run_eval_epoch(eval_loader: DataLoader,
         output_dict = {}
 
     return output_dict
+
+
+def run_train(model: models.TAPEPreTrainedModel,
+              runner: BackwardRunner,
+              train_dataset: Dataset,
+              train_loader: DataLoader,
+              valid_dataset: Dataset,
+              valid_loader: DataLoader,
+              viz: utils.TBLogger,
+              save_path: Path,
+              batch_size: int,
+              num_train_epochs: int,
+              local_rank: int,
+              n_gpu: int,
+              gradient_accumulation_steps: int = 1,
+              num_log_iter: int = 20,
+              no_eval: bool = False,
+              save_freq: typing.Union[int, str] = 1):
+
+    num_train_optimization_steps = utils.get_num_train_optimization_steps(
+        train_dataset, batch_size, num_train_epochs)
+    is_master = local_rank in (-1, 0)
+
+    if isinstance(save_freq, str) and save_freq != 'improvement':
+        raise ValueError(
+            f"Only recongized string value for save_freq is 'improvement'"
+            f", received: {save_freq}")
+
+    if save_freq == 'improvement' and no_eval:
+        raise ValueError("Cannot set save_freq to 'improvement' and no_eval")
+
+    logger.info("***** Running training *****")
+    logger.info("  Num examples = %d", len(train_dataset))
+    logger.info("  Batch size = %d", batch_size)
+    logger.info("  Num epochs = %d", num_train_epochs)
+    logger.info("  Num train steps = %d", num_train_optimization_steps)
+
+    best_val_loss = float('inf')
+    num_epochs_no_improvement = 0
+
+    def do_save(epoch_id: int, num_epochs_no_improvement: int) -> bool:
+        if not is_master:
+            return False
+        if isinstance(save_freq, int):
+            return ((epoch_id + 1) % save_freq == 0) or ((epoch_id + 1) == num_train_epochs)
+        else:
+            return num_epochs_no_improvement == 0
+
+    with utils.wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation_steps):
+        for epoch_id in range(num_train_epochs):
+            run_train_epoch(epoch_id, train_loader, runner,
+                            viz, num_log_iter, gradient_accumulation_steps)
+            if not no_eval:
+                val_loss = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    num_epochs_no_improvement = 0
+                else:
+                    num_epochs_no_improvement += 1
+
+            # Save trained model
+            if do_save(epoch_id, num_epochs_no_improvement):
+                logger.info("** ** * Saving trained model ** ** * ")
+                # Only save the model itself
+                output_model_dir = save_path / f"pytorch_model_{epoch_id}"
+                output_model_dir.mkdir()
+                model_to_save = getattr(model, 'module', model)
+                model_to_save.save_pretrained(output_model_dir)
+                logger.info(f"Saving model checkpoint to {output_model_dir}")
