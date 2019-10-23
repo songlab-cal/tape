@@ -217,7 +217,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         model = nn.DataParallel(model)  # type: ignore
 
     runner = training.ForwardRunner(model, device, n_gpu)
-    valid_dataset = utils.setup_dataset(args.task, args.data_dir, 'valid', args.tokenizer)
+    valid_dataset = utils.setup_dataset(args.task, args.data_dir, args.split, args.tokenizer)
     valid_loader = utils.setup_loader(
         args.task, valid_dataset, args.batch_size, args.local_rank, n_gpu,
         1, args.num_workers)
