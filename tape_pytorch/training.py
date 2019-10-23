@@ -340,3 +340,6 @@ def run_train(model_type: str,
                             f"improvement for {num_epochs_no_improvement} epochs.")
                 break
     logger.info(f"Finished training after {num_train_epochs} epochs.")
+
+    if not no_eval:
+        logger.info(f"Best Val Loss: {best_val_loss}")
