@@ -378,6 +378,7 @@ class SimpleConv(nn.Module):
     def __init__(self, in_dim, hid_dim, out_dim, dropout):
         super().__init__()
         self.main = nn.Sequential(
+            nn.BatchNorm1d(in_dim),  # Added this
             nn.Conv1d(in_dim, hid_dim, 5, padding=2),
             nn.ReLU(),
             nn.Dropout(dropout, inplace=True),

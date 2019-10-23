@@ -5,16 +5,14 @@ from timeit import default_timer as timer
 import itertools
 from collections import ChainMap
 import json
-from pathlib import Path
 
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
-import tape_pytorch.models as models
 import tape_pytorch.utils as utils
 
 try:
@@ -234,7 +232,8 @@ def run_train(model_type: str,
               local_rank: int = -1,
               tokenizer: str = 'bpe',
               num_workers: int = 16,
-              debug: bool = False):
+              debug: bool = False,
+              patience: int = -1):
     input_args = locals()
     device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
 
@@ -335,3 +334,9 @@ def run_train(model_type: str,
                 model_to_save = getattr(model, 'module', model)
                 model_to_save.save_pretrained(output_model_dir)
                 logger.info(f"Saving model checkpoint to {output_model_dir}")
+
+            if patience > 0 and num_epochs_no_improvement >= patience:
+                logger.info(f"Finished training at epoch {epoch_id} because no "
+                            f"improvement for {num_epochs_no_improvement} epochs.")
+                break
+    logger.info(f"Finished training after {num_train_epochs} epochs.")
