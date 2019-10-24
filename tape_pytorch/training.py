@@ -1,6 +1,5 @@
 import typing
 import logging
-from time import strftime, gmtime
 from timeit import default_timer as timer
 import itertools
 from collections import ChainMap
@@ -129,10 +128,8 @@ def run_train_epoch(epoch_id: int,
 
             if runner.global_step % num_log_iter == 0:
                 end_t = timer()
-                time_stamp = strftime("%y-%m-%d %X", gmtime())
                 ep = epoch_id + step / float(len(train_loader))
                 print_str = [
-                    f"[{time_stamp}]",
                     f"[Ep: {ep:.2f}]",
                     f"[Iter: {runner.global_step}]",
                     f"[Time: {end_t - start_t:5.2f}s]",
@@ -156,8 +153,8 @@ def run_valid_epoch(epoch_id: int,
     torch.set_grad_enabled(False)
     runner.model.eval()
 
-    for batch in tqdm(valid_loader, desc='Evaluating split val', total=num_batches,
-                      disable=not is_master):
+    for batch in tqdm(valid_loader, desc='Running Eval', total=num_batches,
+                      disable=not is_master, leave=False):
         loss: LossType = runner.forward(batch)  # type: ignore
         eval_loss += loss.item()
 
@@ -193,6 +190,7 @@ def run_eval_epoch(eval_loader: DataLoader,
         eval_loss += loss.item()
 
     eval_loss /= num_batches
+    eval_loss = utils.reduce_scalar(eval_loss)
     print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
     logger.info(print_str)
 
@@ -233,9 +231,10 @@ def run_train(model_type: str,
               tokenizer: str = 'bpe',
               num_workers: int = 16,
               debug: bool = False,
-              patience: int = -1):
+              patience: int = -1) -> None:
     input_args = locals()
-    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+    device, n_gpu, is_master = utils.setup_distributed(
+        local_rank, no_cuda)
 
     save_path, exp_name = utils.get_savepath_and_expname(
         output_dir, exp_name, is_master)
@@ -324,6 +323,8 @@ def run_train(model_type: str,
                     num_epochs_no_improvement = 0
                 else:
                     num_epochs_no_improvement += 1
+                # Reduce loss across all processes if multiprocessing
+                val_loss = utils.reduce_scalar(val_loss)
 
             # Save trained model
             if do_save(epoch_id, num_epochs_no_improvement):
@@ -338,8 +339,10 @@ def run_train(model_type: str,
             if patience > 0 and num_epochs_no_improvement >= patience:
                 logger.info(f"Finished training at epoch {epoch_id} because no "
                             f"improvement for {num_epochs_no_improvement} epochs.")
+                utils.barrier_if_distributed()
                 break
     logger.info(f"Finished training after {num_train_epochs} epochs.")
 
     if not no_eval:
         logger.info(f"Best Val Loss: {best_val_loss}")
+    utils.barrier_if_distributed()

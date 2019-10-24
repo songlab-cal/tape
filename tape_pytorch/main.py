@@ -304,7 +304,7 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
     pytorch's torch.distributed.launch, modified to be easy to use for
     tape.
     """
-    from multiprocessing import Process
+    from multiprocessing import Process, Manager
     import time
 
     if args is None:
@@ -334,31 +334,29 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
               "*****************************************".format(
                   current_env["OMP_NUM_THREADS"]))
 
-    for local_rank in range(0, args.nproc_per_node):
-        # each process's rank
-        dist_rank = args.nproc_per_node * args.node_rank + local_rank
-        current_env["RANK"] = str(dist_rank)
-        current_env["LOCAL_RANK"] = str(local_rank)
+    with Manager() as manager:
+        namespace = manager.dict()
+        namespace['val_loss'] = [float('inf') for _ in range(args.nproc_per_node)]
+        for local_rank in range(0, args.nproc_per_node):
+            # each process's rank
+            dist_rank = args.nproc_per_node * args.node_rank + local_rank
+            current_env["RANK"] = str(dist_rank)
+            current_env["LOCAL_RANK"] = str(local_rank)
 
-        args.local_rank = local_rank
-        process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
-        process.start()
-        processes.append(process)
+            args.local_rank = local_rank
+            process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
+            process.start()
+            processes.append(process)
 
-    while all(process.is_alive() for process in processes):
-        time.sleep(1)
+        while all(process.is_alive() for process in processes):
+            time.sleep(1)
 
-    process_failed = any(process.exitcode not in (None, 0) for process in processes)
+        process_failed = any(process.exitcode not in (None, 0) for process in processes)
 
-    if process_failed:
-        for process in processes:
-            if process.is_alive():
-                process.terminate()
-
-    # for process in processes:
-        # process.join()
-        # if process.exitcode != 0:
-            # raise ProcessError(f"Process failed with exitcode {process.exitcode}")
+        if process_failed:
+            for process in processes:
+                if process.is_alive():
+                    process.terminate()
 
 
 def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:

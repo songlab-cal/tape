@@ -4,6 +4,7 @@ import typing
 import logging
 from pathlib import Path
 import sys
+from multiprocessing.managers import Namespace
 
 import torch
 import torch.distributed as dist
@@ -139,7 +140,9 @@ def setup_loader(task: str,
 
 
 def setup_distributed(local_rank: int,
-                      no_cuda: bool) -> typing.Tuple[torch.device, int, bool]:
+                      no_cuda: bool,
+                      _global_multiprocess_namespace: typing.Optional[Namespace] = None) \
+        -> typing.Tuple[torch.device, int, bool]:
     if local_rank != -1 and not no_cuda:
         torch.cuda.set_device(local_rank)
         device: torch.device = torch.device("cuda", local_rank)
