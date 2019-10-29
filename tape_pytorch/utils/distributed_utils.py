@@ -46,7 +46,7 @@ def _wrap(fn, kwargs, error_queue):
         sys.exit(1)
 
 
-class SpawnContext:
+class ProcessContext:
     def __init__(self, processes, error_queues):
         self.error_queues = error_queues
         self.processes = processes
@@ -60,7 +60,7 @@ class SpawnContext:
 
     def join(self, timeout=None):
         r"""
-        Tries to join one or more processes in this spawn context.
+        Tries to join one or more processes in this process context.
         If one of them exited with a non-zero exit status, this function
         kills the remaining processes and raises an exception with the cause
         of the first process exiting.
@@ -121,15 +121,15 @@ class SpawnContext:
         raise Exception(msg)
 
 
-def spawn(func: typing.Callable,
-          args: argparse.Namespace,
-          num_processes: int,
-          num_nodes: int = 1,
-          node_rank: int = 0,
-          master_addr: str = "127.0.0.1",
-          master_port: int = 29500,
-          join: bool = True,
-          daemon: bool = False):
+def launch_process_group(func: typing.Callable,
+                         args: argparse.Namespace,
+                         num_processes: int,
+                         num_nodes: int = 1,
+                         node_rank: int = 0,
+                         master_addr: str = "127.0.0.1",
+                         master_port: int = 29500,
+                         join: bool = True,
+                         daemon: bool = False):
     # world size in terms of number of processes
     dist_world_size = num_processes * num_nodes
 
@@ -141,7 +141,6 @@ def spawn(func: typing.Callable,
     if 'OMP_NUM_THREADS' not in os.environ and num_processes > 1:
         current_env["OMP_NUM_THREADS"] = str(4)
 
-    ctx = mp.get_context('spawn')
     error_queues = []
     processes = []
 
@@ -152,9 +151,9 @@ def spawn(func: typing.Callable,
         current_env["LOCAL_RANK"] = str(local_rank)
         args.local_rank = local_rank
 
-        error_queue = ctx.SimpleQueue()
+        error_queue: typing.Queue[Exception] = mp.SimpleQueue()
         kwargs = {'args': args, 'env': current_env}
-        process = ctx.Process(
+        process = mp.Process(
             target=_wrap,
             args=(func, kwargs, error_queue),
             daemon=daemon)
@@ -162,9 +161,9 @@ def spawn(func: typing.Callable,
         error_queues.append(error_queue)
         processes.append(process)
 
-    spawn_context = SpawnContext(processes, error_queues)
+    process_context = ProcessContext(processes, error_queues)
     if not join:
-        return spawn_context
+        return process_context
 
-    while not spawn_context.join():
+    while not process_context.join():
         pass

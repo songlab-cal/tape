@@ -313,8 +313,9 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
         distributed_train_parser = create_train_parser(distributed_parser)
         args = distributed_train_parser.parse_args()
 
-    utils.spawn(run_train, args, args.nproc_per_node, args.nnodes,
-                args.node_rank, args.master_addr, args.master_port)
+    utils.launch_process_group(
+        run_train, args, args.nproc_per_node, args.nnodes,
+        args.node_rank, args.master_addr, args.master_port)
 
 
 def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:

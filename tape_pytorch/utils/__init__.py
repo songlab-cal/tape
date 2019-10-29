@@ -21,4 +21,4 @@ from .setup_utils import setup_distributed  # noqa: F401
 
 from .distributed_utils import barrier_if_distributed  # noqa: F401
 from .distributed_utils import reduce_scalar  # noqa: F401
-from .distributed_utils import spawn  # noqa: F401
+from .distributed_utils import launch_process_group  # noqa: F401
