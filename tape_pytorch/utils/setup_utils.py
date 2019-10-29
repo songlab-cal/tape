@@ -22,10 +22,21 @@ from .utils import get_effective_batch_size
 logger = logging.getLogger(__name__)
 
 
-def setup_logging(local_rank: int, save_path: typing.Optional[Path] = None) -> None:
-    log_level = logging.INFO if local_rank in (-1, 0) else logging.WARNING
+def setup_logging(local_rank: int,
+                  save_path: typing.Optional[Path] = None,
+                  log_level: typing.Union[str, int] = None) -> None:
+    if log_level is None:
+        level = logging.INFO
+    elif isinstance(log_level, str):
+        level = getattr(logging, log_level.upper())
+    elif isinstance(log_level, int):
+        level = log_level
+
+    if local_rank not in (-1, 0):
+        level = max(level, logging.WARN)
+
     root_logger = logging.getLogger()
-    root_logger.setLevel(log_level)
+    root_logger.setLevel(level)
 
     formatter = logging.Formatter(
         "%(asctime)s - %(levelname)s - %(name)s -   %(message)s",
@@ -33,13 +44,13 @@ def setup_logging(local_rank: int, save_path: typing.Optional[Path] = None) -> N
 
     if not root_logger.hasHandlers():
         console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(log_level)
+        console_handler.setLevel(level)
         console_handler.setFormatter(formatter)
         root_logger.addHandler(console_handler)
 
         if save_path is not None:
             file_handler = logging.FileHandler(save_path / 'log')
-            file_handler.setLevel(log_level)
+            file_handler.setLevel(level)
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
 

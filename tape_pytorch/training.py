@@ -232,6 +232,7 @@ def run_train(model_type: str,
               tokenizer: str = 'bpe',
               num_workers: int = 16,
               debug: bool = False,
+              log_level: typing.Union[str, int] = logging.INFO,
               patience: int = -1) -> None:
     input_args = locals()
     device, n_gpu, is_master = utils.setup_distributed(
@@ -245,7 +246,7 @@ def run_train(model_type: str,
         with (save_path / 'config.json').open('w') as f:
             json.dump(input_args, f)
 
-    utils.setup_logging(local_rank, save_path)
+    utils.setup_logging(local_rank, save_path, log_level)
     utils.set_random_seeds(seed, n_gpu)
 
     model = utils.setup_model(
@@ -343,4 +344,4 @@ def run_train(model_type: str,
                 raise errors.EarlyStopping
     logger.info(f"Finished training after {num_train_epochs} epochs.")
     if not no_eval:
-        logger.info(f"Best Val Loss: {best_val_loss}")
+        logger.log(35, f"Best Val Loss: {best_val_loss}")

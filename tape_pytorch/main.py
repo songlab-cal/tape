@@ -1,4 +1,5 @@
 import typing
+import sys
 import os
 import logging
 from pathlib import Path
@@ -53,6 +54,10 @@ def create_base_parser() -> argparse.ArgumentParser:
                         help='Tokenizes to use on the amino acid sequences')
     parser.add_argument('--num-workers', default=16, type=int,
                         help='Number of workers to use for multi-threaded data loading')
+    parser.add_argument('--log-level', default=logging.INFO,
+                        choices=['DEBUG', 'INFO', 'WARN', 'WARNING', 'ERROR',
+                                 logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR],
+                        help="log level for the experiment")
     parser.add_argument('--debug', action='store_true', help='Run in debug mode')
 
     return parser
@@ -203,7 +208,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
 
     device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
 
-    utils.setup_logging(args.local_rank, save_path=None)
+    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
     utils.set_random_seeds(args.seed, n_gpu)
 
     pretrained_dir = Path(args.from_pretrained)
@@ -258,7 +263,7 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
 
     device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
 
-    utils.setup_logging(args.local_rank, save_path=None)
+    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
     utils.set_random_seeds(args.seed, n_gpu)
 
     logger.info(
@@ -314,9 +319,7 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
 
 def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
     import random
-    from itertools import product
     from copy import copy
-    import shutil
 
     if env is not None:
         os.environ = env
@@ -327,9 +330,6 @@ def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -
         gridsearch_args = parser.parse_args()
         config = json.load(gridsearch_args.config_file)
         gridsearch_args.config_file.close()
-        # print(gridsearch_args.config_file)
-        # with gridsearch_args.config_file.open() as f:
-            # config = json.load(f)
 
         fixed_values = {}
         grid_values = {}
@@ -342,36 +342,32 @@ def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -
 
         args = argparse.Namespace(**fixed_values)
 
-    args.no_eval = True
+    args.log_level = 'WARN'
     args.exp_name = 'gridsearch' + "_{:0>6d}".format(random.randint(0, int(1e6)))
     args.save_callback = []
 
+    gridsearch_logger = logging.getLogger('gridsearch')
+    gridsearch_logger.setLevel(logging.INFO)
+    gridsearch_handler = logging.StreamHandler(sys.stdout)
+    gridsearch_handler.setLevel(logging.INFO)
+    gridsearch_formatter = logging.Formatter(
+        "%(levelname)s - %(name)s -    %(message)s",
+        datefmt="%y/%m/%d %H:%M:%S")
+    gridsearch_handler.setFormatter(gridsearch_formatter)
+    gridsearch_logger.addHandler(gridsearch_handler)
+
     def unroll(key, values):
         return ((key, value) for value in values)
-
-    results = []
-    for grid_args in product(*(unroll(key, values) for key, values in grid_values.items())):
+    grid_search_args = list(itertools.product(*itertools.starmap(unroll, grid_values.items())))
+    for i, grid_args in enumerate(grid_search_args):
         run_args = copy(args)
+        run_args.exp_name += f'_{i}'
         for key, arg in grid_args:
             setattr(run_args, key, arg)
-        run_train(copy(run_args))
-        run_args.from_pretrained = os.path.join(
-            run_args.output_dir, run_args.exp_name,
-            f'pytorch_model_{run_args.num_train_epochs - 1}')
-        metrics = run_eval(copy(run_args))
-        results.append((grid_args, metrics))
-        shutil.rmtree(run_args.from_pretrained)
-
-    for grid_args, metrics in results:
-        print(grid_args)
-        print(metrics)
-        print()
-
-    with open(os.path.join(
-            args.output_dir, args.exp_name, 'gridsearch_results.pkl'), 'wb') as f:
-        pkl.dump(results, f)
+        gridsearch_logger.info(
+            f"Running gridsearch {i} / {len(grid_search_args)} with args {grid_args}")
+        run_train_distributed(run_args)
 
 
 if __name__ == '__main__':
-    # run_train()
-    run_embed()
+    run_train_distributed()
