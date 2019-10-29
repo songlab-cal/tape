@@ -3,7 +3,9 @@ import torch.distributed as dist
 import argparse
 import multiprocessing as mp
 import tape_pytorch.utils as utils
+from tape_pytorch.errors import EarlyStopping
 import os
+import time
 
 
 def run_distributed(args: argparse.Namespace, env):
@@ -12,6 +14,11 @@ def run_distributed(args: argparse.Namespace, env):
     a = torch.LongTensor([args.local_rank]).cuda()
     dist.all_reduce(a, dist.ReduceOp.SUM)
     print(a)
+    for i in range(100):
+        if args.local_rank == 0:
+            raise EarlyStopping
+        print(i)
+        time.sleep(1)
 
 
 def test_distributed():

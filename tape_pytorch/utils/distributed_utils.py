@@ -7,8 +7,9 @@ import signal
 
 import torch
 import torch.distributed as dist
-from torch.multiprocessing import _prctl_pr_set_pdeathsig
-from torch.multiprocessing.spawn import SpawnContext
+from torch.multiprocessing import _prctl_pr_set_pdeathsig  # type: ignore
+
+from tape_pytorch.errors import EarlyStopping
 
 
 def reduce_scalar(scalar: float) -> float:
@@ -36,11 +37,88 @@ def _wrap(fn, kwargs, error_queue):
         fn(**kwargs)
     except KeyboardInterrupt:
         pass  # SIGINT; Killed by parent, do nothing
+    except EarlyStopping:
+        sys.exit(signal.SIGUSR1)  # tape early stop exception
     except Exception:
         # Propagate exception to parent process, keeping original traceback
         import traceback
         error_queue.put(traceback.format_exc())
         sys.exit(1)
+
+
+class SpawnContext:
+    def __init__(self, processes, error_queues):
+        self.error_queues = error_queues
+        self.processes = processes
+        self.sentinels = {
+            process.sentinel: index
+            for index, process in enumerate(processes)
+        }
+
+    def pids(self):
+        return [int(process.pid) for process in self.processes]
+
+    def join(self, timeout=None):
+        r"""
+        Tries to join one or more processes in this spawn context.
+        If one of them exited with a non-zero exit status, this function
+        kills the remaining processes and raises an exception with the cause
+        of the first process exiting.
+
+        Returns ``True`` if all processes have been joined successfully,
+        ``False`` if there are more processes that need to be joined.
+
+        Arguments:
+            timeout (float): Wait this long before giving up on waiting.
+        """
+        # Ensure this function can be called even when we're done.
+        if len(self.sentinels) == 0:
+            return True
+
+        # Wait for any process to fail or all of them to succeed.
+        ready = mp.connection.wait(
+            self.sentinels.keys(),
+            timeout=timeout,
+        )
+        error_index = None
+        for sentinel in ready:
+            index = self.sentinels.pop(sentinel)
+            process = self.processes[index]
+            process.join()
+            if process.exitcode != 0:
+                error_index = index
+                break
+        # Return if there was no error.
+        if error_index is None:
+            # Return whether or not all processes have been joined.
+            return len(self.sentinels) == 0
+        # Assume failure. Terminate processes that are still alive.
+        for process in self.processes:
+            if process.is_alive():
+                process.terminate()
+            process.join()
+
+        # There won't be an error on the queue if the process crashed.
+        if self.error_queues[error_index].empty():
+            exitcode = self.processes[error_index].exitcode
+            if exitcode == signal.SIGUSR1:
+                return True
+            elif exitcode < 0:
+                name = signal.Signals(-exitcode).name
+                raise Exception(
+                    "process %d terminated with signal %s" %
+                    (error_index, name)
+                )
+            else:
+                raise Exception(
+                    "process %d terminated with exit code %d" %
+                    (error_index, exitcode)
+                )
+
+        original_trace = self.error_queues[error_index].get()
+        msg = "\n\n-- Process %d terminated with the following error:\n" % error_index
+        msg += original_trace
+        raise Exception(msg)
 
 
 def spawn(func: typing.Callable,
