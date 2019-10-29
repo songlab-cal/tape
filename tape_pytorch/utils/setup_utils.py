@@ -14,9 +14,10 @@ from pytorch_transformers import AdamW
 from pytorch_transformers.modeling_utils import PreTrainedModel
 
 import tape_pytorch.models as models
-import tape_pytorch.utils as utils
 from tape_pytorch.registry import registry
 from tape_pytorch.datasets import TAPEDataset
+
+from .utils import get_effective_batch_size
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +131,7 @@ def setup_loader(task: str,
 
     loader = DataLoader(  # type: ignore
         dataset,
-        batch_size=utils.get_effective_batch_size(
+        batch_size=get_effective_batch_size(
             batch_size, local_rank, n_gpu, gradient_accumulation_steps),
         num_workers=num_workers,
         collate_fn=collate_fn_cls(),
