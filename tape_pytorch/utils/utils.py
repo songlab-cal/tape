@@ -50,7 +50,7 @@ def path_to_datetime(path: Path) -> datetime:
             year, month, day, time_str = datetime_string.split('-')
             hour, minute, second = time_str.split(':')
         except ValueError:
-            return datetime(int(0), int(0), int(0))
+            return datetime(1, 1, 1)
 
     pathdatetime = datetime(
         int(year), int(month), int(day), int(hour), int(minute), int(second))
