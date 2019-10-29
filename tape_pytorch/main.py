@@ -300,60 +300,16 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
 
 
 def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
-    """Runs distributed training via multiprocessing. Mostly ripped from
-    pytorch's torch.distributed.launch, modified to be easy to use for
-    tape.
+    """Runs distributed training via multiprocessing.
     """
-    from multiprocessing import Process
-    import time
-
     if args is None:
         base_parser = create_base_parser()
         distributed_parser = create_distributed_parser(base_parser)
         distributed_train_parser = create_train_parser(distributed_parser)
         args = distributed_train_parser.parse_args()
 
-    # world size in terms of number of processes
-    dist_world_size = args.nproc_per_node * args.nnodes
-
-    # set PyTorch distributed related environmental variables
-    current_env = os.environ.copy()
-    current_env["MASTER_ADDR"] = args.master_addr
-    current_env["MASTER_PORT"] = str(args.master_port)
-    current_env["WORLD_SIZE"] = str(dist_world_size)
-
-    processes = []
-
-    if 'OMP_NUM_THREADS' not in os.environ and args.nproc_per_node > 1:
-        current_env["OMP_NUM_THREADS"] = str(1)
-        print("*****************************************\n"
-              "Setting OMP_NUM_THREADS environment variable for each process "
-              "to be {} in default, to avoid your system being overloaded, "
-              "please further tune the variable for optimal performance in "
-              "your application as needed. \n"
-              "*****************************************".format(
-                  current_env["OMP_NUM_THREADS"]))
-
-    for local_rank in range(0, args.nproc_per_node):
-        # each process's rank
-        dist_rank = args.nproc_per_node * args.node_rank + local_rank
-        current_env["RANK"] = str(dist_rank)
-        current_env["LOCAL_RANK"] = str(local_rank)
-
-        args.local_rank = local_rank
-        process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
-        process.start()
-        processes.append(process)
-
-        while all(process.is_alive() for process in processes):
-            time.sleep(1)
-
-        process_failed = any(process.exitcode not in (None, 0) for process in processes)
-
-        if process_failed:
-            for process in processes:
-                if process.is_alive():
-                    process.terminate()
+    utils.spawn(run_train, args, args.nproc_per_node, args.nnodes,
+                args.node_rank, args.master_addr, args.master_port)
 
 
 def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
