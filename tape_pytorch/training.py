@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
 import tape_pytorch.utils as utils
+import tape_pytorch.errors as errors
 
 try:
     from apex import amp
@@ -339,10 +340,7 @@ def run_train(model_type: str,
             if patience > 0 and num_epochs_no_improvement >= patience:
                 logger.info(f"Finished training at epoch {epoch_id} because no "
                             f"improvement for {num_epochs_no_improvement} epochs.")
-                utils.barrier_if_distributed()
-                break
+                raise errors.EarlyStopping
     logger.info(f"Finished training after {num_train_epochs} epochs.")
-
     if not no_eval:
         logger.info(f"Best Val Loss: {best_val_loss}")
-    utils.barrier_if_distributed()
