@@ -304,7 +304,7 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
     pytorch's torch.distributed.launch, modified to be easy to use for
     tape.
     """
-    from multiprocessing import Process, Manager
+    from multiprocessing import Process
     import time
 
     if args is None:
@@ -334,19 +334,16 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
               "*****************************************".format(
                   current_env["OMP_NUM_THREADS"]))
 
-    with Manager() as manager:
-        namespace = manager.dict()
-        namespace['val_loss'] = [float('inf') for _ in range(args.nproc_per_node)]
-        for local_rank in range(0, args.nproc_per_node):
-            # each process's rank
-            dist_rank = args.nproc_per_node * args.node_rank + local_rank
-            current_env["RANK"] = str(dist_rank)
-            current_env["LOCAL_RANK"] = str(local_rank)
+    for local_rank in range(0, args.nproc_per_node):
+        # each process's rank
+        dist_rank = args.nproc_per_node * args.node_rank + local_rank
+        current_env["RANK"] = str(dist_rank)
+        current_env["LOCAL_RANK"] = str(local_rank)
 
-            args.local_rank = local_rank
-            process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
-            process.start()
-            processes.append(process)
+        args.local_rank = local_rank
+        process = Process(target=run_train, kwargs={'args': args, 'env': current_env})
+        process.start()
+        processes.append(process)
 
         while all(process.is_alive() for process in processes):
             time.sleep(1)
