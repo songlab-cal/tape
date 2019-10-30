@@ -338,10 +338,19 @@ def run_train(model_type: str,
                 model_to_save.save_pretrained(output_model_dir)
                 logger.info(f"Saving model checkpoint to {output_model_dir}")
 
+            utils.barrier_if_distributed()
             if patience > 0 and num_epochs_no_improvement >= patience:
                 logger.info(f"Finished training at epoch {epoch_id} because no "
                             f"improvement for {num_epochs_no_improvement} epochs.")
-                raise errors.EarlyStopping
+                logger.log(35, f"Best Val Loss: {best_val_loss}")
+                if local_rank != -1:
+                    # If you're distributed, raise this error. It sends a signal to
+                    # the master process which lets it kill other processes and terminate
+                    # without actually reporting an error. See utils/distributed_utils.py
+                    # for the signal handling code.
+                    raise errors.EarlyStopping
+                else:
+                    break
     logger.info(f"Finished training after {num_train_epochs} epochs.")
     if not no_eval:
         logger.log(35, f"Best Val Loss: {best_val_loss}")

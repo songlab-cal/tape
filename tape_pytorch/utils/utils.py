@@ -194,7 +194,7 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        exc_args = exc_value.args
+        exc_args = exc_value.args if exc_value is not None else None
         if exc_args and 'CUDA out of memory' in exc_args[0]:
             eff_ngpu = get_effective_num_gpus(self._local_rank, self._n_gpu)
             eff_batch_size = get_effective_batch_size(

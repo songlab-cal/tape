@@ -22,6 +22,7 @@ def reduce_scalar(scalar: float) -> float:
 
 
 def barrier_if_distributed() -> None:
+    """Raises a barrier if in a distributed context, otherwise does nothing."""
     if dist.is_available() and dist.is_initialized():
         dist.barrier()
 

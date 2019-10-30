@@ -26,7 +26,7 @@
 	"log_dir": "./logs",
     "nnodes": 1,
     "node_rank": 0,
-    "nproc_per_node": 2,
+    "nproc_per_node": 3,
     "master_addr": "127.0.0.1",
     "master_port": 29500,
     "no_eval": false,

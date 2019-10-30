@@ -320,14 +320,34 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
             self.base_model(input_ids, attention_mask=attention_mask))
 
         sequence_embedding = outputs[cls.SEQUENCE_EMBEDDING_KEY]
+        # if token_lengths is not None:
+            # new_sequences = []
+            # for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
+                # expanded_seq = []
+                # for embed, n in zip(seq_embed, seq_tok_lengths):
+                    # if n == 0:
+                        # continue
+                    # embed = embed.repeat(n).view(n, self.config.hidden_size)
+                    # expanded_seq.append(embed)
+                # expanded_seq = torch.cat(expanded_seq, 0)
+                # new_sequences.append(expanded_seq)
+#
+            # max_len = max(seq.size(0) for seq in new_sequences)
+            # new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
+                             # for embed in new_sequences]
+#
+            # sequence_embedding = torch.stack(new_sequences, 0)
+            # sequence_embedding = sequence_embedding[:, :sequence_labels.size(1)]
+#
+        sequence_class_scores = self.predict(sequence_embedding)
         if token_lengths is not None:
             new_sequences = []
-            for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
+            for seq_embed, seq_tok_lengths in zip(sequence_class_scores, token_lengths):
                 expanded_seq = []
                 for embed, n in zip(seq_embed, seq_tok_lengths):
                     if n == 0:
                         continue
-                    embed = embed.repeat(n).view(n, self.config.hidden_size)
+                    embed = embed.repeat(n).view(n, embed.size(0))
                     expanded_seq.append(embed)
                 expanded_seq = torch.cat(expanded_seq, 0)
                 new_sequences.append(expanded_seq)
@@ -336,15 +356,14 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
             new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
                              for embed in new_sequences]
 
-            sequence_embedding = torch.stack(new_sequences, 0)
-            sequence_embedding = sequence_embedding[:, :sequence_labels.size(1)]
-
-        sequence_class_scores = self.predict(sequence_embedding)
-        outputs[cls.PREDICTION_KEY] = sequence_class_scores
+            sequence_class_scores = torch.stack(new_sequences, 0)
+            sequence_class_scores = sequence_class_scores[:, :sequence_labels.size(1)]
+            sequence_class_scores = sequence_class_scores.contiguous()
+        outputs[cls.PREDICTION_KEY] = sequence_class_scores.contiguous()
 
         if sequence_labels is not None:
             loss = F.cross_entropy(
-                sequence_class_scores.view(-1, sequence_class_scores.size(2)),
+                sequence_class_scores.contiguous().view(-1, sequence_class_scores.size(2)),
                 sequence_labels.view(-1),
                 ignore_index=-1)
             outputs[cls.LOSS_KEY] = loss

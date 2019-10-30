@@ -368,6 +368,7 @@ def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -
         gridsearch_logger.info(
             f"Running gridsearch {i} / {len(grid_search_args)} with args {grid_args}")
         run_train_distributed(run_args)
+        args.master_addr += 1
 
 
 if __name__ == '__main__':
