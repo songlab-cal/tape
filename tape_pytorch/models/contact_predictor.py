@@ -2,6 +2,7 @@ import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.utils.checkpoint import checkpoint
 
 from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
 from pytorch_transformers.modeling_bert import BertLayerNorm
@@ -221,15 +222,28 @@ class ResNetEncoder(nn.Module):
                                 norm_layer=norm_layer))
         return nn.ModuleList(layers)
 
-    def forward(self, x, input_mask=None):
+    def run_function(self, start, chunk_size):
+        def custom_forward(x, input_mask):
+            for layer in self.layer1[start:start + chunk_size]:
+                x = layer(x, input_mask=input_mask)
+            return x
+        return custom_forward
+
+    def forward(self, x, input_mask=None, chunks=None):
         x = x.permute(0, 3, 1, 2)
         if input_mask is not None:
             input_mask = input_mask.permute(0, 3, 1, 2)
         x = self.conv1(x, input_mask)
         x = self.bn1(x)
         x = self.relu(x)
-        for module in self.layer1:
-            x = module(x, input_mask)
+        if chunks is not None:
+            assert isinstance(chunks, int)
+            chunk_size = (len(self.layer1) + chunks - 1) // chunks
+            for start in range(0, len(self.modules), chunk_size):
+                x = checkpoint(self.run_function(start, chunk_size), x, input_mask)
+        else:
+            for module in self.layer1:
+                x = module(x, input_mask)
         # for module in self.layer2:
             # x = module(x, input_mask)
         # for module in self.layer3:
@@ -263,7 +277,9 @@ class ContactPredictor(TAPEPreTrainedModel):
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
         sequence_embedding = outputs[cls.SEQUENCE_EMBEDDING_KEY]
-        pairwise_features = self.feature_extractor(sequence_embedding)
+
+        pairwise_features = checkpoint(self.feature_extractor, sequence_embedding)
+        # pairwise_features = self.feature_extractor(sequence_embedding)
 
         if attention_mask is not None:
             pairwise_mask = attention_mask.unsqueeze(2) * attention_mask.unsqueeze(1)
@@ -271,7 +287,7 @@ class ContactPredictor(TAPEPreTrainedModel):
         else:
             pairwise_mask = None
 
-        encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask)
+        encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask, chunks=1)
         prediction = self.predict(encoded_output)
 
         outputs[cls.PREDICTION_KEY] = prediction
