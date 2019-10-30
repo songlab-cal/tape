@@ -239,7 +239,7 @@ class ResNetEncoder(nn.Module):
         if chunks is not None:
             assert isinstance(chunks, int)
             chunk_size = (len(self.layer1) + chunks - 1) // chunks
-            for start in range(0, len(self.modules), chunk_size):
+            for start in range(0, len(self.layer1), chunk_size):
                 x = checkpoint(self.run_function(start, chunk_size), x, input_mask)
         else:
             for module in self.layer1:
