@@ -13,6 +13,7 @@ from .task_models import SequenceClassificationModel  # noqa: F401
 from .task_models import RemoteHomologyModel  # noqa: F401
 from .task_models import SequenceToSequenceClassificationModel  # noqa: F401
 from .task_models import SS3ClassModel  # noqa: F401
+from .contact_predictor import ContactPredictor  # noqa: F401
 
 from tape_pytorch.registry import registry
 

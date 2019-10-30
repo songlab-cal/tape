@@ -161,6 +161,9 @@ def run_valid_epoch(epoch_id: int,
 
     eval_loss /= num_batches
 
+    # Reduce loss across all processes if multiprocessing
+    eval_loss = utils.reduce_scalar(eval_loss)
+
     print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
 
     logger.info(print_str)
@@ -325,8 +328,6 @@ def run_train(model_type: str,
                     num_epochs_no_improvement = 0
                 else:
                     num_epochs_no_improvement += 1
-                # Reduce loss across all processes if multiprocessing
-                val_loss = utils.reduce_scalar(val_loss)
 
             # Save trained model
             if do_save(epoch_id, num_epochs_no_improvement):

@@ -402,7 +402,7 @@ class RemoteHomologyBatch(PaddedBatch):
                 'label': fold_label}
 
 
-@registry.register_dataset('proteinnet')
+@registry.register_dataset('contact_prediction')
 class ProteinnetDataset(TAPEDataset):
 
     def __init__(self,
@@ -423,14 +423,26 @@ class ProteinnetDataset(TAPEDataset):
         item, token_ids, attention_mask = super().__getitem__(index)
 
         valid_mask = item['valid_mask']
-        contact_map = squareform(pdist(item['tertiary'])) < 8.0
+        contact_map = np.less(squareform(pdist(item['tertiary'])), 8.0).astype(np.int64)
+        contact_map[~(valid_mask[:, None] & valid_mask[None, :])] = -1
 
-        return token_ids, attention_mask, contact_map, valid_mask
+        return token_ids, attention_mask, contact_map
 
 
-@registry.register_collate_fn('proteinnet')
+@registry.register_collate_fn('contact_prediction')
 class ProteinnetBatch(PaddedBatch):
-    pass
+
+    def __call__(self, batch):
+        input_ids, input_mask, contact_labels = tuple(zip(*batch))
+        input_ids = self._pad(input_ids, 0)  # pad index is zero
+        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        contact_labels = self._pad(contact_labels, 0)
+
+        batch = {'input_ids': input_ids,
+                 'attention_mask': input_mask,
+                 'contact_labels': contact_labels}
+
+        return batch
 
 
 @registry.register_dataset('secondary_structure')
