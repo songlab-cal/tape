@@ -1,11 +1,7 @@
-import json
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
-
-from pytorch_transformers.modeling_utils import PreTrainedModel, PretrainedConfig
-from pytorch_transformers.modeling_bert import BertLayerNorm
 
 from tape_pytorch.registry import registry
 
@@ -257,12 +253,11 @@ class ResNetEncoder(nn.Module):
 @registry.register_task_model('contact_prediction')
 class ContactPredictor(TAPEPreTrainedModel):
 
-    TARGET_KEY = 'true_contacts'
-    PREDICTION_KEY = 'contact_scores'
-    PREDICTION_IS_SEQUENCE = True
-
     def __init__(self, config):
-        super().__init__(config)
+        super().__init__(
+            config, target_key='true_contacts',
+            prediction_key='contact_scores',
+            prediction_is_sequence=True)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.encoder = ResNetEncoder(config)
         self.feature_extractor = PairwiseFeatureExtractor(config.output_size, 64)
@@ -272,11 +267,9 @@ class ContactPredictor(TAPEPreTrainedModel):
                 input_ids,
                 attention_mask=None,
                 contact_labels=None):
-        cls = self.__class__
-
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
-        sequence_embedding = outputs[cls.SEQUENCE_EMBEDDING_KEY]
+        sequence_embedding = outputs[self.sequence_embedding_key]
 
         pairwise_features = checkpoint(self.feature_extractor, sequence_embedding)
         # pairwise_features = self.feature_extractor(sequence_embedding)
@@ -290,13 +283,13 @@ class ContactPredictor(TAPEPreTrainedModel):
         encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask, chunks=1)
         prediction = self.predict(encoded_output)
 
-        outputs[cls.PREDICTION_KEY] = prediction
+        outputs[self.prediction_key] = prediction
 
         if contact_labels is not None:
             loss = F.cross_entropy(
                 prediction[:, 1:-1, 1:-1].contiguous().view(-1, 2),
                 contact_labels.view(-1),
                 ignore_index=-1)
-            outputs[cls.LOSS_KEY] = loss
+            outputs[self.loss_key] = loss
 
         return outputs

@@ -1,3 +1,4 @@
+from abc import ABC, abstractproperty
 import typing
 import json
 import torch
@@ -73,32 +74,36 @@ class TAPEConfig(PretrainedConfig):
         return config
 
 
-class TAPEPreTrainedModel(PreTrainedModel):
-
-    # Output keys
-    SEQUENCE_EMBEDDING_KEY = 'sequence_embedding'
-    POOLED_EMBEDDING_KEY = 'pooled_embedding'
-    HIDDEN_STATES_KEY = 'hidden_states'
-    ATTENTIONS_KEY = 'attentions'
-    LOSS_KEY = 'loss'
+class TAPEPreTrainedModel(PreTrainedModel, ABC):
 
     config_class = TAPEConfig
     base_model_prefix = "base_model"
 
+    def __init__(self,
+                 config: TAPEConfig,
+                 target_key: typing.Optional[str] = None,
+                 prediction_key: typing.Optional[str] = None,
+                 prediction_is_sequence: typing.Optional[bool] = None):
+        super().__init__(config)
+        self._target_key = target_key if target_key is not None else ''
+        self._prediction_key = prediction_key if prediction_key is not None else ''
+        self._prediction_is_sequence = prediction_is_sequence \
+            if prediction_is_sequence is not None else False
+
     def _convert_outputs_to_dictionary(self, outputs: typing.Sequence[torch.Tensor]) \
             -> typing.Dict[str, torch.Tensor]:
-        cls = self.__class__
+
         dict_outputs = {}
-        dict_outputs[cls.SEQUENCE_EMBEDDING_KEY] = outputs[0]
-        dict_outputs[cls.POOLED_EMBEDDING_KEY] = outputs[1]
+        dict_outputs[self.sequence_embedding_key] = outputs[0]
+        dict_outputs[self.pooled_embedding_key] = outputs[1]
 
         if self.config.output_hidden_states and self.config.output_attentions:
-            dict_outputs[cls.HIDDEN_STATES_KEY] = outputs[2]
-            dict_outputs[cls.ATTENTIONS_KEY] = outputs[3]
+            dict_outputs[self.hidden_states_key] = outputs[2]
+            dict_outputs[self.attentions_key] = outputs[3]
         elif self.config.output_hidden_states:
-            dict_outputs[cls.HIDDEN_STATES_KEY] = outputs[2]
+            dict_outputs[self.hidden_states_key] = outputs[2]
         elif self.config.output_attentions:
-            dict_outputs[cls.ATTENTIONS_KEY] = outputs[2]
+            dict_outputs[self.attentions_key] = outputs[2]
 
         return dict_outputs
 
@@ -114,6 +119,38 @@ class TAPEPreTrainedModel(PreTrainedModel):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
+
+    @property
+    def sequence_embedding_key(self) -> str:
+        return 'sequence_embedding'
+
+    @property
+    def pooled_embedding_key(self) -> str:
+        return 'pooled_embedding'
+
+    @property
+    def hidden_states_key(self) -> str:
+        return 'hidden_states'
+
+    @property
+    def attentions_key(self) -> str:
+        return 'attentions'
+
+    @property
+    def loss_key(self) -> str:
+        return 'loss'
+
+    @property
+    def target_key(self) -> str:
+        return self._target_key
+
+    @abstractproperty
+    def prediction_key(self) -> str:
+        return self._prediction_key
+
+    @abstractproperty
+    def prediction_is_sequence(self) -> bool:
+        return self._prediction_is_sequence
 
 
 class BertPredictionHeadTransform(nn.Module):
@@ -174,12 +211,10 @@ class EmbedModel(TAPEPreTrainedModel):
 @registry.register_task_model('pfam')
 class MaskedLMModel(TAPEPreTrainedModel):
 
-    TARGET_KEY = 'masked_lm_labels'
-    PREDICTION_KEY = 'prediction_scores'
-    PREDICTION_IS_SEQUENCE = True
-
     def __init__(self, config):
-        super().__init__(config)
+        super().__init__(
+            config, target_key='masked_lm_labels', prediction_key='prediction_scores',
+            prediction_is_sequence=True)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.classify = BertLMPredictionHead(config)
 
@@ -200,13 +235,12 @@ class MaskedLMModel(TAPEPreTrainedModel):
                 clan_labels=None,
                 family_labels=None):
 
-        cls = self.__class__
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, position_ids=None, token_type_ids=None,
                             attention_mask=attention_mask, head_mask=None))
-        prediction_scores = self.classify(outputs[cls.SEQUENCE_EMBEDDING_KEY])
+        prediction_scores = self.classify(outputs[self.sequence_embedding_key])
 
-        outputs[cls.PREDICTION_KEY] = prediction_scores
+        outputs[self.prediction_key] = prediction_scores
 
         if masked_lm_labels is not None:
             # loss_fct = CrossEntropyLoss(ignore_index=-1)
@@ -214,7 +248,7 @@ class MaskedLMModel(TAPEPreTrainedModel):
                 prediction_scores.view(-1, self.config.vocab_size),
                 masked_lm_labels.view(-1),
                 ignore_index=-1)
-            outputs[cls.LOSS_KEY] = masked_lm_loss
+            outputs[self.loss_key] = masked_lm_loss
 
         return outputs
 
@@ -223,12 +257,11 @@ class MaskedLMModel(TAPEPreTrainedModel):
 @registry.register_task_model('stability')
 class FloatPredictModel(TAPEPreTrainedModel):
 
-    TARGET_KEY = 'target'
-    PREDICTION_KEY = 'float_prediction'
-    PREDICTION_IS_SEQUENCE = False
-
     def __init__(self, config):
-        super().__init__(config)
+        super().__init__(
+            config, target_key='target',
+            prediction_key='float_prediction',
+            prediction_is_sequence=False)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(config.hidden_size, config.hidden_size * 2, 1, 0.5)
 
@@ -238,18 +271,18 @@ class FloatPredictModel(TAPEPreTrainedModel):
                 input_ids,
                 attention_mask=None,
                 target=None):
-        cls = self.__class__
+
         # sequence_output, pooled_output, (hidden_states), (attention)
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
-        float_prediction = self.predict(outputs[cls.POOLED_EMBEDDING_KEY])
+        float_prediction = self.predict(outputs[self.pooled_embedding_key])
 
-        outputs[cls.PREDICTION_KEY] = float_prediction
+        outputs[self.prediction_key] = float_prediction
 
         if target is not None:
             target = target.reshape_as(float_prediction)
             loss = F.mse_loss(float_prediction, target)
-            outputs[cls.LOSS_KEY] = loss
+            outputs[self.loss_key] = loss
 
         # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
         return outputs
@@ -257,12 +290,11 @@ class FloatPredictModel(TAPEPreTrainedModel):
 
 class SequenceClassificationModel(TAPEPreTrainedModel):
 
-    TARGET_KEY = 'label'
-    PREDICTION_KEY = 'class_scores'
-    PREDICTION_IS_SEQUENCE = False
-
     def __init__(self, config, num_classes):
-        super().__init__(config)
+        super().__init__(
+            config, target_key='label',
+            prediction_key='class_scores',
+            prediction_is_sequence=False)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         self.predict = SimpleMLP(
             config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
@@ -273,16 +305,16 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
                 input_ids,
                 attention_mask=None,
                 label=None):
-        cls = self.__class__
+
         # sequence_output, pooled_output, (hidden_states), (attention)
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
-        class_scores = self.predict(outputs[cls.POOLED_EMBEDDING_KEY])
-        outputs[cls.PREDICTION_KEY] = class_scores
+        class_scores = self.predict(outputs[self.pooled_embedding_key])
+        outputs[self.prediction_key] = class_scores
 
         if label is not None:
             loss = F.cross_entropy(class_scores, label)
-            outputs[cls.LOSS_KEY] = loss
+            outputs[self.loss_key] = loss
 
         return outputs  # (class_prediction_loss), class_scores, (hidden_states), (attentions)
 
@@ -296,12 +328,11 @@ class RemoteHomologyModel(SequenceClassificationModel):
 
 class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
 
-    TARGET_KEY = 'sequence_labels'
-    PREDICTION_KEY = 'sequence_class_scores'
-    PREDICTION_IS_SEQUENCE = True
-
     def __init__(self, config, num_classes: int):
-        super().__init__(config)
+        super().__init__(
+            config, target_key='sequence_labels',
+            prediction_key='sequence_class_scores',
+            prediction_is_sequence=True)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
         # self.predict = SimpleMLP(
             # config.hidden_size, config.hidden_size * 2, num_classes, 0.5)
@@ -314,12 +345,12 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
                 attention_mask=None,
                 sequence_labels=None,
                 token_lengths=None):
-        cls = self.__class__
+
         # sequence_output, pooled_output, (hidden_states), (attention)
         outputs = self._convert_outputs_to_dictionary(
             self.base_model(input_ids, attention_mask=attention_mask))
 
-        sequence_embedding = outputs[cls.SEQUENCE_EMBEDDING_KEY]
+        sequence_embedding = outputs[self.sequence_embedding_key]
         # if token_lengths is not None:
             # new_sequences = []
             # for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
@@ -359,14 +390,14 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
             sequence_class_scores = torch.stack(new_sequences, 0)
             sequence_class_scores = sequence_class_scores[:, :sequence_labels.size(1)]
             sequence_class_scores = sequence_class_scores.contiguous()
-        outputs[cls.PREDICTION_KEY] = sequence_class_scores.contiguous()
+        outputs[self.prediction_key] = sequence_class_scores.contiguous()
 
         if sequence_labels is not None:
             loss = F.cross_entropy(
                 sequence_class_scores.contiguous().view(-1, sequence_class_scores.size(2)),
                 sequence_labels.view(-1),
                 ignore_index=-1)
-            outputs[cls.LOSS_KEY] = loss
+            outputs[self.loss_key] = loss
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
         return outputs
