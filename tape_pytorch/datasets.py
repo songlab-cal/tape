@@ -411,9 +411,9 @@ class ProteinnetDataset(TAPEDataset):
                  tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'test'):
+        if mode not in ('train', 'train_unfiltered', 'valid', 'test'):
             raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
-                             f"['train', 'valid', 'test']")
+                             f"['train', 'train_unfiltered', 'valid', 'test']")
 
         data_path = Path(data_path)
         data_file = f'proteinnet/proteinnet_{mode}.lmdb'

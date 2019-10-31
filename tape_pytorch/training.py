@@ -104,7 +104,7 @@ class BackwardRunner(ForwardRunner):
 def run_train_epoch(epoch_id: int,
                     train_loader: DataLoader,
                     runner: BackwardRunner,
-                    viz: utils.TBLogger,
+                    viz: typing.Optional[utils.TBLogger] = None,
                     num_log_iter: int = 20,
                     gradient_accumulation_steps: int = 1) -> float:
     metrics = utils.MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
@@ -124,7 +124,8 @@ def run_train_epoch(epoch_id: int,
         if (step + 1) % gradient_accumulation_steps == 0:
             runner.step()
             metrics.update(loss_tmp)
-            viz.line_plot(runner.global_step, loss_tmp, "loss", "train")
+            if viz is not None:
+                viz.line_plot(runner.global_step, loss_tmp, "loss", "train")
             loss_tmp = 0.
 
             if runner.global_step % num_log_iter == 0:

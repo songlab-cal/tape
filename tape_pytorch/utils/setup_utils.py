@@ -143,7 +143,7 @@ def setup_loader(task: str,
     loader = DataLoader(  # type: ignore
         dataset,
         batch_size=get_effective_batch_size(
-            batch_size, local_rank, n_gpu, gradient_accumulation_steps),
+            batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu,
         num_workers=num_workers,
         collate_fn=collate_fn_cls(),
         sampler=sampler_type(dataset))
@@ -152,9 +152,7 @@ def setup_loader(task: str,
 
 
 def setup_distributed(local_rank: int,
-                      no_cuda: bool,
-                      _global_multiprocess_namespace: typing.Optional[Namespace] = None) \
-        -> typing.Tuple[torch.device, int, bool]:
+                      no_cuda: bool) -> typing.Tuple[torch.device, int, bool]:
     if local_rank != -1 and not no_cuda:
         torch.cuda.set_device(local_rank)
         device: torch.device = torch.device("cuda", local_rank)
