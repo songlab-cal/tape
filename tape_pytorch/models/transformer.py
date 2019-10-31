@@ -24,6 +24,7 @@ from io import open
 
 import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from pytorch_transformers.modeling_utils import (PretrainedConfig, PreTrainedModel,
                                                  prune_linear_layer)
@@ -324,28 +325,66 @@ class BertEncoder(nn.Module):
         self.output_hidden_states = config.output_hidden_states
         self.layer = nn.ModuleList([BertLayer(config) for _ in range(config.num_hidden_layers)])
 
-    def forward(self, hidden_states, attention_mask, head_mask=None):
+    def run_function(self, start, chunk_size):
+        def custom_forward(hidden_states, attention_mask, *head_masks):
+            all_hidden_states = ()
+            all_attentions = ()
+            chunk_slice = slice(start, start + chunk_size)
+            for layer, head_mask in zip(self.layer[chunk_slice], head_masks[chunk_slice]):
+                if self.output_hidden_states:
+                    all_hidden_states = all_hidden_states + (hidden_states,)
+                layer_outputs = layer(hidden_states, attention_mask, head_mask)
+                hidden_states = layer_outputs[0]
+
+                if self.output_attentions:
+                    all_attentions = all_attentions + (layer_outputs[1],)
+
+            if self.output_hidden_states:
+                all_hidden_states = all_hidden_states + (hidden_states,)
+            outputs = (hidden_states,)
+            if self.output_hidden_states:
+                outputs = outputs + (all_hidden_states,)
+            if self.output_attentions:
+                outputs = outputs + (all_attentions,)
+            return outputs
+
+        return custom_forward
+
+    def forward(self, hidden_states, attention_mask, head_mask=None, chunks=None):
         all_hidden_states = ()
         all_attentions = ()
-        for i, layer_module in enumerate(self.layer):
+
+        if chunks is not None:
+            assert isinstance(chunks, int)
+            chunk_size = (len(self.layer) + chunks - 1) // chunks
+            for start in range(0, len(self.layer), chunk_size):
+                outputs = checkpoint(self.run_function(start, chunk_size),
+                                     hidden_states, attention_mask, *head_mask)
+                if self.output_hidden_states:
+                    all_hidden_states = all_hidden_states + outputs[1]
+                if self.output_attentions:
+                    all_attentions = all_attentions + outputs[-1]
+                hidden_states = outputs[0]
+        else:
+            for i, layer_module in enumerate(self.layer):
+                if self.output_hidden_states:
+                    all_hidden_states = all_hidden_states + (hidden_states,)
+
+                layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
+                hidden_states = layer_outputs[0]
+
+                if self.output_attentions:
+                    all_attentions = all_attentions + (layer_outputs[1],)
+
+            # Add last layer
             if self.output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            layer_outputs = layer_module(hidden_states, attention_mask, head_mask[i])
-            hidden_states = layer_outputs[0]
-
+            outputs = (hidden_states,)
+            if self.output_hidden_states:
+                outputs = outputs + (all_hidden_states,)
             if self.output_attentions:
-                all_attentions = all_attentions + (layer_outputs[1],)
-
-        # Add last layer
-        if self.output_hidden_states:
-            all_hidden_states = all_hidden_states + (hidden_states,)
-
-        outputs = (hidden_states,)
-        if self.output_hidden_states:
-            outputs = outputs + (all_hidden_states,)
-        if self.output_attentions:
-            outputs = outputs + (all_attentions,)
+                outputs = outputs + (all_attentions,)
         return outputs  # outputs, (hidden states), (attentions)
 
 
@@ -543,7 +582,8 @@ class Transformer(PreTrainedModel):
         embedding_output = self.embeddings(input_ids, position_ids=position_ids, token_type_ids=token_type_ids)
         encoder_outputs = self.encoder(embedding_output,
                                        extended_attention_mask,
-                                       head_mask=head_mask)
+                                       head_mask=head_mask,
+                                       chunks=2)
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
 
