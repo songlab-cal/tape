@@ -1,4 +1,3 @@
-from abc import ABC, abstractproperty
 import typing
 import json
 import torch
@@ -74,7 +73,7 @@ class TAPEConfig(PretrainedConfig):
         return config
 
 
-class TAPEPreTrainedModel(PreTrainedModel, ABC):
+class TAPEPreTrainedModel(PreTrainedModel):
 
     config_class = TAPEConfig
     base_model_prefix = "base_model"
@@ -144,13 +143,17 @@ class TAPEPreTrainedModel(PreTrainedModel, ABC):
     def target_key(self) -> str:
         return self._target_key
 
-    @abstractproperty
+    @property
     def prediction_key(self) -> str:
         return self._prediction_key
 
-    @abstractproperty
+    @property
     def prediction_is_sequence(self) -> bool:
         return self._prediction_is_sequence
+
+    @property
+    def metrics_key(self) -> str:
+        return 'metrics'
 
 
 class BertPredictionHeadTransform(nn.Module):

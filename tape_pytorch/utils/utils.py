@@ -7,6 +7,7 @@ from datetime import datetime
 import os
 import argparse
 import contextlib
+from collections import defaultdict
 
 import numpy as np
 import torch
@@ -139,12 +140,20 @@ class MetricsAccumulator:
         self._totalloss = 0.
         self._nupdates = 0
         self._smoothing = smoothing
+        self._currmetrics: typing.Dict[str, float] = defaultdict(lambda: 0.0)
+        self._totalmetrics: typing.Dict[str, float] = defaultdict(lambda: 0.0)
 
-    def update(self, loss: float):
+    def update(self, loss: float, metrics: typing.Dict[str, float]):
         if self._currloss is None:
             self._currloss = loss
         else:
             self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
+
+        for name, value in metrics.items():
+            currvalue = self._currmetrics[name]
+            newvalue = currvalue * self._smoothing + value * (1 - self._smoothing)
+            self._currmetrics[name] = newvalue
+            self._totalmetrics[name] += value
 
         self._totalloss += loss
         self._nupdates += 1
@@ -154,8 +163,17 @@ class MetricsAccumulator:
             raise RuntimeError("Trying to get the loss without any updates")
         return self._currloss
 
+    def metrics(self) -> typing.Dict[str, float]:
+        if self._nupdates == 0:
+            raise RuntimeError("Trying to get metrics without any updates")
+        return dict(self._currmetrics)
+
     def final_loss(self) -> float:
         return self._totalloss / self._nupdates
+
+    def final_metrics(self) -> typing.Dict[str, float]:
+        return {name: value / self._nupdates
+                for name, value in self._totalmetrics.items()}
 
 
 class wrap_cuda_oom_error(contextlib.ContextDecorator):

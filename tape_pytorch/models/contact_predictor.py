@@ -282,14 +282,38 @@ class ContactPredictor(TAPEPreTrainedModel):
 
         encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask, chunks=1)
         prediction = self.predict(encoded_output)
+        prediction = prediction[:, 1:-1, 1:-1].contiguous()
 
         outputs[self.prediction_key] = prediction
 
         if contact_labels is not None:
             loss = F.cross_entropy(
-                prediction[:, 1:-1, 1:-1].contiguous().view(-1, 2),
+                prediction.view(-1, 2),
                 contact_labels.view(-1),
                 ignore_index=-1)
             outputs[self.loss_key] = loss
 
+            precision_at_l5 = self.compute_precision_at_l5(
+                attention_mask, prediction, contact_labels)
+            outputs[self.metrics_key] = {'precision_at_l5': precision_at_l5}
+
         return outputs
+
+    def compute_precision_at_l5(self, attention_mask, prediction, labels):
+        sequence_lengths = attention_mask.sum(1) - 2
+        valid_mask = labels != -1
+        max_seqlen = sequence_lengths.max()
+        seqpos = torch.arange(max_seqlen, device=sequence_lengths.device)
+        x_ind, y_ind = torch.meshgrid(seqpos, seqpos)
+        valid_mask &= ((y_ind - x_ind) >= 5).unsqueeze(0)
+        probs = F.softmax(prediction, 3)[:, :, :, 1]
+        valid_mask = valid_mask.type_as(probs)
+        correct = 0
+        total = 0
+        for length, prob, label, mask in zip(sequence_lengths, probs, labels, valid_mask):
+            masked_prob = (prob * mask).view(-1)
+            most_likely = masked_prob.topk(length // 5, sorted=False)
+            selected = label.view(-1).gather(0, most_likely.indices)
+            correct += selected.sum().float()
+            total += selected.numel()
+        return correct / total

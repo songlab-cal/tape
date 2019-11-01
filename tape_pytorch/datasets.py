@@ -436,7 +436,7 @@ class ProteinnetBatch(PaddedBatch):
         input_ids, input_mask, contact_labels = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
         input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
-        contact_labels = self._pad(contact_labels, 0)
+        contact_labels = self._pad(contact_labels, -1)
 
         batch = {'input_ids': input_ids,
                  'attention_mask': input_mask,

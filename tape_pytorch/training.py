@@ -2,7 +2,7 @@ import typing
 import logging
 from timeit import default_timer as timer
 import itertools
-from collections import ChainMap
+from collections import ChainMap, defaultdict
 import json
 
 from tqdm import tqdm
@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 LossType = torch.Tensor
 OutputDict = typing.Dict[str, typing.Any]
-ForwardModelOutput = typing.Union[LossType, typing.Tuple[LossType, OutputDict]]
+ForwardModelOutput = typing.Union[typing.Tuple[LossType, OutputDict],
+                                  typing.Tuple[LossType, OutputDict, OutputDict]]
 
 
 class ForwardRunner:
@@ -39,7 +40,9 @@ class ForwardRunner:
         self.model = model
         self.device = device
         self.n_gpu = n_gpu
-        self._loss_key = getattr(model, 'module', model).LOSS_KEY
+        model = getattr(model, 'module', model)
+        self._loss_key = model.loss_key
+        self._metrics_key = model.metrics_key
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
@@ -49,18 +52,24 @@ class ForwardRunner:
                      for name, tensor in batch.items()}
         outputs = self.model(**batch)
         loss = outputs[self.loss_key]
+        metrics = outputs[self.metrics_key]
 
         if self.n_gpu > 1:
             loss = loss.mean()
+            metrics = {name: metric.mean() for name, metric in metrics.items()}
 
         if return_outputs:
-            return loss, outputs
+            return loss, metrics, outputs
         else:
-            return loss
+            return loss, metrics
 
     @property
     def loss_key(self) -> str:
         return self._loss_key
+
+    @property
+    def metrics_key(self) -> str:
+        return self._metrics_key
 
 
 class BackwardRunner(ForwardRunner):
@@ -106,8 +115,8 @@ def run_train_epoch(epoch_id: int,
                     runner: BackwardRunner,
                     viz: typing.Optional[utils.TBLogger] = None,
                     num_log_iter: int = 20,
-                    gradient_accumulation_steps: int = 1) -> float:
-    metrics = utils.MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
+                    gradient_accumulation_steps: int = 1) -> typing.Tuple[float, typing.Dict[str, float]]:
+    accumulator = utils.MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
 
     torch.set_grad_enabled(True)
     runner.model.train()
@@ -115,18 +124,24 @@ def run_train_epoch(epoch_id: int,
     start_t = timer()
 
     loss_tmp = 0.
+    metrics_tmp: typing.Dict[str, float] = defaultdict(lambda: 0.0)
     for step, batch in enumerate(train_loader):
-        loss: LossType = runner.forward(batch)  # type: ignore
+        loss, metrics = runner.forward(batch)  # type: ignore
         loss /= gradient_accumulation_steps
         loss_tmp += loss.item()
+        for name, value in metrics.items():
+            metrics_tmp[name] += value.item() / gradient_accumulation_steps
         runner.backward(loss)
 
         if (step + 1) % gradient_accumulation_steps == 0:
             runner.step()
-            metrics.update(loss_tmp)
+            accumulator.update(loss_tmp, metrics_tmp)
             if viz is not None:
                 viz.line_plot(runner.global_step, loss_tmp, "loss", "train")
+                for name, value in metrics_tmp.items():
+                    viz.line_plot(runner.global_step, value, name, "train")
             loss_tmp = 0.
+            metrics_tmp = defaultdict(lambda: 0.0)
 
             if runner.global_step % num_log_iter == 0:
                 end_t = timer()
@@ -135,42 +150,50 @@ def run_train_epoch(epoch_id: int,
                     f"[Ep: {ep:.2f}]",
                     f"[Iter: {runner.global_step}]",
                     f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {metrics.loss():.5g}]",
-                    f"[LR: {runner.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
+                    f"[Loss: {accumulator.loss():.5g}]"]
+                print_str += [f"[{name.capitalize()}: {value:.5g}]"
+                              for name, value in accumulator.metrics().items()]
+                print_str += [f"[LR: {runner.scheduler.get_lr()[0]:.5g}]"]  # type: ignore
                 start_t = end_t
 
                 logger.info(''.join(print_str))
-    logger.info(f"Train: [Loss: {metrics.final_loss():.5g}]")
-    return metrics.final_loss()
+
+    final_print_str = f"Train: [Loss: {accumulator.final_loss():.5g}]"
+    for name, value in metrics.items():
+        final_print_str += f"[{name.capitalize()}: {value:.5g}]"
+    logger.info(final_print_str)
+    return accumulator.final_loss(), accumulator.final_metrics()
 
 
 def run_valid_epoch(epoch_id: int,
                     valid_loader: DataLoader,
                     runner: ForwardRunner,
                     viz: utils.TBLogger,
-                    is_master: bool = True) -> float:
+                    is_master: bool = True) -> typing.Tuple[float, typing.Dict[str, float]]:
     num_batches = len(valid_loader)
-    eval_loss = 0.
+    accumulator = utils.MetricsAccumulator()
 
     torch.set_grad_enabled(False)
     runner.model.eval()
 
     for batch in tqdm(valid_loader, desc='Running Eval', total=num_batches,
                       disable=not is_master, leave=False):
-        loss: LossType = runner.forward(batch)  # type: ignore
-        eval_loss += loss.item()
-
-    eval_loss /= num_batches
+        loss, metrics = runner.forward(batch)  # type: ignore
+        accumulator.update(loss.item(), {name: value.item() for name, value in metrics.items()})
 
     # Reduce loss across all processes if multiprocessing
-    eval_loss = utils.reduce_scalar(eval_loss)
+    eval_loss = utils.reduce_scalar(accumulator.final_loss())
+    metrics = {name: utils.reduce_scalar(value)
+               for name, value in accumulator.final_metrics().items()}
 
     print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
+    for name, value in metrics.items():
+        print_str += f"[{name.capitalize()}: {value:.5g}]"
 
     logger.info(print_str)
     viz.line_plot(epoch_id, eval_loss, "loss", "val")
 
-    return eval_loss
+    return eval_loss, metrics
 
 
 def run_eval_epoch(eval_loader: DataLoader,
@@ -323,7 +346,7 @@ def run_train(model_type: str,
             run_train_epoch(epoch_id, train_loader, runner,
                             viz, num_log_iter, gradient_accumulation_steps)
             if not no_eval:
-                val_loss = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
+                val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
                     num_epochs_no_improvement = 0
