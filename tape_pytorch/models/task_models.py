@@ -24,6 +24,13 @@ BASE_MODEL_CLASSES = {
     'unirep': Unirep}
 
 
+def accuracy(scores, labels, ignore_index=-1):
+    valid_mask = (labels != ignore_index)
+    predictions = scores.argmax(-1)
+    correct = (predictions == labels) * valid_mask
+    return correct.sum().float() / valid_mask.sum().float()
+
+
 class TAPEConfig(PretrainedConfig):
     r"""
         Arguments:
@@ -253,6 +260,8 @@ class MaskedLMModel(TAPEPreTrainedModel):
                 ignore_index=-1)
             outputs[self.loss_key] = masked_lm_loss
 
+            outputs[self.metrics_key] = {'acc': accuracy(prediction_scores, masked_lm_labels)}
+
         return outputs
 
 
@@ -287,6 +296,8 @@ class FloatPredictModel(TAPEPreTrainedModel):
             loss = F.mse_loss(float_prediction, target)
             outputs[self.loss_key] = loss
 
+            outputs[self.metrics_key] = {}
+
         # (float_prediction_loss), float_prediction, (hidden_states), (attentions)
         return outputs
 
@@ -318,6 +329,8 @@ class SequenceClassificationModel(TAPEPreTrainedModel):
         if label is not None:
             loss = F.cross_entropy(class_scores, label)
             outputs[self.loss_key] = loss
+
+            outputs[self.metrics_key] = accuracy(class_scores, label)
 
         return outputs  # (class_prediction_loss), class_scores, (hidden_states), (attentions)
 
@@ -401,6 +414,8 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
                 sequence_labels.view(-1),
                 ignore_index=-1)
             outputs[self.loss_key] = loss
+
+            outputs[self.metrics_key] = {'acc': accuracy(sequence_class_scores, sequence_labels)}
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
         return outputs
