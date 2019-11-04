@@ -583,7 +583,7 @@ class Transformer(PreTrainedModel):
         encoder_outputs = self.encoder(embedding_output,
                                        extended_attention_mask,
                                        head_mask=head_mask,
-                                       chunks=1)
+                                       chunks=6)
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
 

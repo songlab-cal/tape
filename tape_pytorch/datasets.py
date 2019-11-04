@@ -417,9 +417,11 @@ class ProteinnetDataset(TAPEDataset):
 
         data_path = Path(data_path)
         data_file = f'proteinnet/proteinnet_{mode}.lmdb'
+        self._mode = mode
         super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
+        index = index % super().__len__()
         item, token_ids, attention_mask = super().__getitem__(index)
 
         valid_mask = item['valid_mask']
@@ -427,6 +429,9 @@ class ProteinnetDataset(TAPEDataset):
         contact_map[~(valid_mask[:, None] & valid_mask[None, :])] = -1
 
         return token_ids, attention_mask, contact_map
+
+    def __len__(self) -> int:
+        return 1000000 if 'train' in self._mode else super().__len__()
 
 
 @registry.register_collate_fn('contact_prediction')

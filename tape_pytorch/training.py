@@ -18,6 +18,7 @@ import tape_pytorch.errors as errors
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as DDP
+    # from apex.parallel import Reducer
     APEX_FOUND = True
 except ImportError:
     APEX_FOUND = False
@@ -81,7 +82,8 @@ class BackwardRunner(ForwardRunner):
                  device: torch.device = torch.device('cuda:0'),
                  n_gpu: int = 1,
                  fp16: bool = False,
-                 max_grad_norm: float = 1.0):
+                 max_grad_norm: float = 1.0,
+                 local_rank=-1):
 
         super().__init__(model, device, n_gpu)
         self.optimizer = optimizer
@@ -89,6 +91,10 @@ class BackwardRunner(ForwardRunner):
         self.fp16 = fp16
         self.max_grad_norm = max_grad_norm
         self._global_step = 0
+        self._local_rank = local_rank
+
+        # if local_rank != -1:
+            # self.reducer = Reducer(model)
 
     def backward(self, loss) -> None:
         if self.fp16:
@@ -98,6 +104,8 @@ class BackwardRunner(ForwardRunner):
             loss.backward()
 
     def step(self) -> None:
+        # if self._local_rank != -1:
+            # self.reducer.reduce()
         nn.utils.clip_grad_norm_(
             self.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
@@ -186,12 +194,13 @@ def run_valid_epoch(epoch_id: int,
     metrics = {name: utils.reduce_scalar(value)
                for name, value in accumulator.final_metrics().items()}
 
+    viz.line_plot(epoch_id, eval_loss, "loss", "val")
     print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
     for name, value in metrics.items():
         print_str += f"[{name.capitalize()}: {value:.5g}]"
+        viz.line_plot(epoch_id, value, name, "val")
 
     logger.info(print_str)
-    viz.line_plot(epoch_id, eval_loss, "loss", "val")
 
     return eval_loss, metrics
 
@@ -310,7 +319,7 @@ def run_train(model_type: str,
         optimizer, warmup_steps=warmup_steps, t_total=num_train_optimization_steps)
 
     runner = BackwardRunner(
-        model, optimizer, scheduler, device, n_gpu, fp16, max_grad_norm)
+        model, optimizer, scheduler, device, n_gpu, fp16, max_grad_norm, local_rank)
 
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)

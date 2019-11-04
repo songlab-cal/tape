@@ -144,11 +144,15 @@ class SymmetricPredictor(nn.Module):
 
     def __init__(self, in_features: int):
         super().__init__()
-        self.predict = nn.Linear(in_features, 2)
+        self.predict = nn.Sequential(
+            nn.Conv2d(in_features, in_features, 1),
+            nn.ReLU(),
+            nn.Dropout(inplace=True),
+            nn.Conv2d(in_features, 2, 1))
 
     def forward(self, inputs):
         prediction = self.predict(inputs)
-        prediction = (prediction + prediction.transpose(1, 2)) / 2
+        prediction = (prediction + prediction.transpose(2, 3)) / 2
         return prediction
 
 
@@ -186,7 +190,7 @@ class ResNetEncoder(nn.Module):
         self.bn1 = norm_layer(self.inplanes)
         self.relu = nn.ReLU(inplace=True)
         # self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        self.layer1 = self._make_layer(block, 16, 2)
+        self.layer1 = self._make_layer(block, 16, 60)
         # self.layer2 = self._make_layer(block, 16, config.cm_layers[1], stride=1,
                                        # dilate=config.cm_replace_stride_with_dilation[0])
         # self.layer3 = self._make_layer(block, 16, config.cm_layers[2], stride=1,
@@ -226,7 +230,6 @@ class ResNetEncoder(nn.Module):
         return custom_forward
 
     def forward(self, x, input_mask=None, chunks=None):
-        x = x.permute(0, 3, 1, 2)
         if input_mask is not None:
             input_mask = input_mask.permute(0, 3, 1, 2)
         x = self.conv1(x, input_mask)
@@ -246,7 +249,6 @@ class ResNetEncoder(nn.Module):
             # x = module(x, input_mask)
         # for module in self.layer4:
             # x = module(x, input_mask)
-        x = x.permute(0, 2, 3, 1)
         return x
 
 
@@ -259,7 +261,7 @@ class ContactPredictor(TAPEPreTrainedModel):
             prediction_key='contact_scores',
             prediction_is_sequence=True)
         self.base_model = BASE_MODEL_CLASSES[config.base_model](config)
-        self.encoder = ResNetEncoder(config)
+        # self.encoder = ResNetEncoder(config)
         self.feature_extractor = PairwiseFeatureExtractor(config.output_size, 64)
         self.predict = SymmetricPredictor(64)
 
@@ -271,8 +273,8 @@ class ContactPredictor(TAPEPreTrainedModel):
             self.base_model(input_ids, attention_mask=attention_mask))
         sequence_embedding = outputs[self.sequence_embedding_key]
 
-        pairwise_features = checkpoint(self.feature_extractor, sequence_embedding)
-        # pairwise_features = self.feature_extractor(sequence_embedding)
+        # pairwise_features = checkpoint(self.feature_extractor, sequence_embedding)
+        pairwise_features = self.feature_extractor(sequence_embedding)
 
         if attention_mask is not None:
             pairwise_mask = attention_mask.unsqueeze(2) * attention_mask.unsqueeze(1)
@@ -280,8 +282,10 @@ class ContactPredictor(TAPEPreTrainedModel):
         else:
             pairwise_mask = None
 
-        encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask, chunks=1)
-        prediction = self.predict(encoded_output)
+        pairwise_features = pairwise_features.permute(0, 3, 1, 2).contiguous()
+        # encoded_output = self.encoder(pairwise_features, input_mask=pairwise_mask, chunks=1)
+        prediction = self.predict(pairwise_features)
+        prediction = prediction.permute(0, 2, 3, 1)
         prediction = prediction[:, 1:-1, 1:-1].contiguous()
 
         outputs[self.prediction_key] = prediction
@@ -296,6 +300,7 @@ class ContactPredictor(TAPEPreTrainedModel):
             precision_at_l5 = self.compute_precision_at_l5(
                 attention_mask, prediction, contact_labels)
             outputs[self.metrics_key] = {'precision_at_l5': precision_at_l5}
+            # outputs[self.metrics_key] = {}
 
         return outputs
 

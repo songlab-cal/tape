@@ -140,7 +140,7 @@ class MetricsAccumulator:
         self._totalloss = 0.
         self._nupdates = 0
         self._smoothing = smoothing
-        self._currmetrics: typing.Dict[str, float] = defaultdict(lambda: 0.0)
+        self._currmetrics: typing.Dict[str, float] = {}
         self._totalmetrics: typing.Dict[str, float] = defaultdict(lambda: 0.0)
 
     def update(self, loss: float, metrics: typing.Dict[str, float]):
@@ -150,8 +150,12 @@ class MetricsAccumulator:
             self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
 
         for name, value in metrics.items():
-            currvalue = self._currmetrics[name]
-            newvalue = currvalue * self._smoothing + value * (1 - self._smoothing)
+            if name in self._currmetrics:
+                currvalue = self._currmetrics[name]
+                newvalue = currvalue * self._smoothing + value * (1 - self._smoothing)
+            else:
+                newvalue = value
+
             self._currmetrics[name] = newvalue
             self._totalmetrics[name] += value
 
