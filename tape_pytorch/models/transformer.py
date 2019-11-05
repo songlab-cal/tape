@@ -35,7 +35,8 @@ logger = logging.getLogger(__name__)
 
 def gelu(x):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different (and gives slightly different results):
+        For information: OpenAI GPT's gelu is slightly different
+            (and gives slightly different results):
         0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
         Also see https://arxiv.org/abs/1606.08415
     """
@@ -51,8 +52,8 @@ ACT2FN = {"gelu": gelu, "relu": torch.nn.functional.relu, "swish": swish}
 
 class TransformerConfig(PretrainedConfig):
     r"""
-        :class:`~pytorch_transformers.BertConfig` is the configuration class to store the configuration of a
-        `BertModel`.
+        :class:`~pytorch_transformers.BertConfig` is the configuration class to store the
+        configuration of a `BertModel`.
 
 
         Arguments:
@@ -119,7 +120,8 @@ class TransformerConfig(PretrainedConfig):
 try:
     from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
 except (ImportError, AttributeError):
-    logger.info("Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex .")
+    logger.info("Better speed can be achieved with apex installed from "
+                "https://www.github.com/nvidia/apex .")
 
     class BertLayerNorm(nn.Module):  # type: ignore
         def __init__(self, hidden_size, eps=1e-12):
@@ -142,12 +144,14 @@ class BertEmbeddings(nn.Module):
     """
     def __init__(self, config):
         super(BertEmbeddings, self).__init__()
-        self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size, padding_idx=0)
-        self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
+        self.word_embeddings = nn.Embedding(
+            config.vocab_size, config.hidden_size, padding_idx=0)
+        self.position_embeddings = nn.Embedding(
+            config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
 
-        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be able to load
-        # any TensorFlow checkpoint file
+        # self.LayerNorm is not snake-cased to stick with TensorFlow model variable name and be
+        # able to load any TensorFlow checkpoint file
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -205,7 +209,8 @@ class BertSelfAttention(nn.Module):
         # Take the dot product between "query" and "key" to get the raw attention scores.
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
-        # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
+        # Apply the attention mask is (precomputed for all layers in
+        # BertModel forward() function)
         attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
@@ -225,7 +230,8 @@ class BertSelfAttention(nn.Module):
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
         context_layer = context_layer.view(*new_context_layer_shape)
 
-        outputs = (context_layer, attention_probs) if self.output_attentions else (context_layer,)
+        outputs = (context_layer, attention_probs) \
+            if self.output_attentions else (context_layer,)
         return outputs
 
 
@@ -583,7 +589,7 @@ class Transformer(PreTrainedModel):
         encoder_outputs = self.encoder(embedding_output,
                                        extended_attention_mask,
                                        head_mask=head_mask,
-                                       chunks=6)
+                                       chunks=None)
         sequence_output = encoder_outputs[0]
         pooled_output = self.pooler(sequence_output)
 

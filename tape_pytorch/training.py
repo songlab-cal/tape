@@ -14,6 +14,7 @@ from pytorch_transformers import WarmupLinearSchedule
 
 import tape_pytorch.utils as utils
 import tape_pytorch.errors as errors
+import tape_pytorch.models as models
 
 try:
     from apex import amp
@@ -26,6 +27,8 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 LossType = torch.Tensor
+MetricsDict = typing.Dict[str, float]
+LossAndMetrics = typing.Tuple[float, MetricsDict]
 OutputDict = typing.Dict[str, typing.Any]
 ForwardModelOutput = typing.Union[typing.Tuple[LossType, OutputDict],
                                   typing.Tuple[LossType, OutputDict, OutputDict]]
@@ -34,7 +37,7 @@ ForwardModelOutput = typing.Union[typing.Tuple[LossType, OutputDict],
 class ForwardRunner:
 
     def __init__(self,
-                 model: nn.Module,
+                 model: models.TAPEPreTrainedModel,
                  device: torch.device = torch.device('cuda:0'),
                  n_gpu: int = 1):
 
@@ -76,7 +79,7 @@ class ForwardRunner:
 class BackwardRunner(ForwardRunner):
 
     def __init__(self,
-                 model: nn.Module,
+                 model: models.TAPEPreTrainedModel,
                  optimizer: optim.Optimizer,  # type: ignore
                  scheduler: optim.lr_scheduler.LambdaLR,
                  device: torch.device = torch.device('cuda:0'),
@@ -93,9 +96,6 @@ class BackwardRunner(ForwardRunner):
         self._global_step = 0
         self._local_rank = local_rank
 
-        # if local_rank != -1:
-            # self.reducer = Reducer(model)
-
     def backward(self, loss) -> None:
         if self.fp16:
             with amp.scale_loss(loss, self.optimizer) as scaled_loss:
@@ -104,8 +104,6 @@ class BackwardRunner(ForwardRunner):
             loss.backward()
 
     def step(self) -> None:
-        # if self._local_rank != -1:
-            # self.reducer.reduce()
         nn.utils.clip_grad_norm_(
             self.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
@@ -123,7 +121,7 @@ def run_train_epoch(epoch_id: int,
                     runner: BackwardRunner,
                     viz: typing.Optional[utils.TBLogger] = None,
                     num_log_iter: int = 20,
-                    gradient_accumulation_steps: int = 1) -> typing.Tuple[float, typing.Dict[str, float]]:
+                    gradient_accumulation_steps: int = 1) -> LossAndMetrics:
     accumulator = utils.MetricsAccumulator(smoothing=1 - 1 / num_log_iter)
 
     torch.set_grad_enabled(True)
