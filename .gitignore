@@ -2,6 +2,7 @@ data/
 logs/
 results/
 pretrained_models/
+wandb/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
