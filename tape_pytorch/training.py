@@ -111,10 +111,9 @@ class BackwardRunner(ForwardRunner):
             loss.backward()
 
     def step(self) -> None:
-        if self._local_rank == -1:
+        if self._local_rank == -1 or not self.fp16:
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
             self._step()
-        elif not self.fp16:
-            raise NotImplementedError("Haven't implemented distributed w/o fp16")
         else:
             self._step_distributed_fp16()
 
@@ -124,27 +123,10 @@ class BackwardRunner(ForwardRunner):
             self.scheduler.step()  # type: ignore
         self._global_step += 1
 
-    def _step_distributed(self) -> None:
-        # TODO: doesn't work yet
-        nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.max_grad_norm)
-        # manually allreduce gradients after all accumulation steps
-        # 1. allocate an uninitialized buffer for flattened gradient
-        master_grads = [p.grad for p in self.model.parameters() if p.grad is not None]
-        flat_grad_size = sum(p.numel() for p in master_grads)
-        allreduce_dtype = torch.float32
-        flat_raw = torch.empty(flat_grad_size, device='cuda', dtype=allreduce_dtype)
-        # 2. combine unflattening and predivision of unscaled 'raw' gradient
-        allreduced_views = apex_C.unflatten(flat_raw, master_grads)
-        allreduced_views.div_(
-            torch.distributed.get_world_size() * self.gradient_accumulation_steps)
-        # 3. sum gradient across ranks. Because of the predivision, this averages the gradient
-        torch.distributed.all_reduce(flat_raw)
-        self._step()
-
     def _step_distributed_fp16(self) -> None:
-        nn.utils.clip_grad_norm_(
-            self.model.parameters(), self.max_grad_norm)
+        # Optimized step function from https://github.com/NVIDIA/DeepLearningExamples
+        # Only performs allreduce after gradient accumulation, which reduces communication
+        nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
         # manually allreduce gradients after all accumulation steps
         # check for Inf/NaN
         # 1. allocate an uninitialized buffer for flattened gradient
