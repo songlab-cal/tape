@@ -14,6 +14,8 @@ import inspect
 import torch
 import torch.nn as nn
 
+import tape_pytorch.models as models
+
 try:
     import apex  # noqa: F401
     APEX_FOUND = True
@@ -36,7 +38,7 @@ warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
 def create_base_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Parent parser for tape functions',
                                      add_help=False)
-    parser.add_argument('model_type', choices=list(registry.model_name_mapping.keys()),
+    parser.add_argument('model_type', choices=list(models.KNOWN_MODELS),
                         help='Base model class to run')
     parser.add_argument('--model-config-file', default=None, type=utils.check_is_file,
                         help='Config file for model')
@@ -219,8 +221,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
         f"device: {device} "
         f"n_gpu: {n_gpu}")
 
-    model = utils.setup_model(
-        args.task, args.from_pretrained, args.model_config_file, args.model_type)
+    model = models.get(args.model_type, args.task, args.model_config_file, args.from_pretrained)
 
     if n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
@@ -272,8 +273,8 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         f"device: {device} "
         f"n_gpu: {n_gpu}")
 
-    model = utils.setup_model(
-        args.model_type, args.task, args.from_pretrained, args.model_config_file)
+    model = models.get(
+        args.model_type, args.task, args.model_config_file, args.from_pretrained)
 
     if n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore

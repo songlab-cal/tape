@@ -36,6 +36,10 @@ TASK_LABEL_SIZE_MAPPING = {
     'remote_homology': 1195}
 
 
+KNOWN_MODELS = set(pair[0] for pair in TASK_MODEL_MAPPING)
+KNOWN_TASKS = set(pair[1] for pair in TASK_MODEL_MAPPING)
+
+
 def _get_task_model(base_model: str, task: str) -> protein_models.ProteinModel:
     try:
         return TASK_MODEL_MAPPING[(base_model, task)]
