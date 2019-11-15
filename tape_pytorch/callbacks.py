@@ -16,15 +16,15 @@ def save_default(model,
 
     model = getattr(model, 'module', model)  # get around DataParallel wrapper
 
-    target = inputs[model.TARGET_KEY].cpu().numpy()
-    prediction = outputs[model.PREDICTION_KEY].cpu().numpy()
+    target = inputs[model.target_key].cpu().numpy()
+    prediction = outputs[model.prediction_key].cpu().numpy()
 
     if target.shape[-1] == 1:
         target = np.squeeze(target, -1)
     if prediction.shape[-1] == 1:
         prediction = np.squeeze(prediction, -1)
 
-    if model.PREDICTION_IS_SEQUENCE:
+    if model.prediction_is_sequence:
         sequence_lengths = _get_sequence_lengths(inputs['input_ids'])
         target = [t[:seqlen] for t, seqlen in zip(target, sequence_lengths)]
         prediction = [p[:seqlen] for p, seqlen in zip(prediction, sequence_lengths)]
@@ -32,7 +32,7 @@ def save_default(model,
         target = [t for t in target]
         prediction = [p for p in prediction]
 
-    return {model.TARGET_KEY: target, model.PREDICTION_KEY: prediction}
+    return {model.target_key: target, model.prediction_key: prediction}
 
 
 @registry.register_callback('save_embedding')
