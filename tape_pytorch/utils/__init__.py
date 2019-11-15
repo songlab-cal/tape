@@ -12,7 +12,6 @@ from .utils import wrap_cuda_oom_error  # noqa: F401
 from .utils import save_state  # noqa: F401
 
 from .setup_utils import setup_logging  # noqa: F401
-from .setup_utils import setup_model  # noqa: F401
 from .setup_utils import setup_optimizer  # noqa: F401
 from .setup_utils import setup_dataset  # noqa: F401
 from .setup_utils import setup_loader  # noqa: F401

@@ -1,48 +1,77 @@
-import typing
+from typing import Union
+from typing import Optional
 from pathlib import Path
 
-from .transformer import Transformer  # noqa: F401
-from .unirep import Unirep  # noqa: F401
-from .resnet import ResNet  # noqa: F401
-from .lstm import LSTM  # noqa: F401
-from .task_models import TAPEConfig  # noqa: F401
-from .task_models import TAPEPreTrainedModel  # noqa: F401
-from .task_models import MaskedLMModel  # noqa: F401
-from .task_models import FloatPredictModel  # noqa: F401
-from .task_models import SequenceClassificationModel  # noqa: F401
-from .task_models import RemoteHomologyModel  # noqa: F401
-from .task_models import SequenceToSequenceClassificationModel  # noqa: F401
-from .task_models import SS3ClassModel  # noqa: F401
-from .contact_predictor import ContactPredictor  # noqa: F401
-
-from tape_pytorch.registry import registry
+import protein_models
 
 
-def from_pretrained(task: str, load_dir: typing.Union[str, Path]) -> TAPEPreTrainedModel:
-    if task not in registry.task_model_name_mapping:
-        raise ValueError(f"Unrecognized task: {task}")
-    model_cls = registry.get_task_model_class(task)
-    model = model_cls.from_pretrained(Path(load_dir))
+PathType = Union[str, Path]
 
-    return model
+TASK_MODEL_MAPPING = {
+    ('transformer', 'mlm'):
+        protein_models.ProteinBertForMaskedLM,
+    ('transformer', 'secondary_structure'):
+        protein_models.ProteinBertForSequenceToSequenceClassification,
+    ('transformer', 'remote_homology'):
+        protein_models.ProteinBertForSequenceClassification,
+    ('transformer', 'fluorescence'):
+        protein_models.ProteinBertForValuePrediction,
+    ('transformer', 'stability'):
+        protein_models.ProteinBertForValuePrediction,
+    ('resnet', 'mlm'):
+        protein_models.ProteinResNetForMaskedLM,
+    ('resnet', 'secondary_structure'):
+        protein_models.ProteinResNetForSequenceToSequenceClassification,
+    ('resnet', 'remote_homology'):
+        protein_models.ProteinResNetForSequenceClassification,
+    ('resnet', 'fluorescence'):
+        protein_models.ProteinResNetForValuePrediction,
+    ('resnet', 'stability'):
+        protein_models.ProteinResNetForValuePrediction
+}
 
 
-def from_config(task: str, model_config_file: typing.Union[str, Path]) -> TAPEPreTrainedModel:
-    if task not in registry.task_model_name_mapping:
-        raise ValueError(f"Unrecognized task: {task}")
-    model_cls = registry.get_task_model_class(task)
-    config = TAPEConfig.from_json_file(model_config_file)
-    model = model_cls(config)
-
-    return model
+TASK_LABEL_SIZE_MAPPING = {
+    'secondary_structure': 3,
+    'remote_homology': 1195}
 
 
-def from_model_type(task: str, base_model_type: str) -> TAPEPreTrainedModel:
-    if task not in registry.task_model_name_mapping:
-        raise ValueError(f"Unrecognized task: {task}")
-    model_cls = registry.get_task_model_class(task)
-    base_config = registry.get_model_class(base_model_type).config_class()
-    config = TAPEConfig(base_config, base_model=base_model_type)
-    model = model_cls(config)
+def _get_task_model(base_model: str, task: str) -> protein_models.ProteinModel:
+    try:
+        return TASK_MODEL_MAPPING[(base_model, task)]
+    except KeyError:
+        raise KeyError(f"No model found for task {task} with base model type {base_model}")
 
+
+def get(base_model: str,
+        task: str,
+        config_file: Optional[Union[str, Path]] = None,
+        load_dir: Optional[PathType] = None) -> protein_models.ProteinModel:
+    """ Create a TAPE task model, either from scratch or from a pretrained model.
+        This is mostly a helper function that evaluates the if statements in a
+        sensible order if you pass all three of the arguments.
+
+    Args:
+        base_model (str): Which type of model to create (e.g. transformer, unirep, ...)
+        task (str): The TAPE task for which to create a model
+        config_file (str, optional): A json config file that specifies hyperparameters
+        load_dir (str, optional): A save directory for a pretrained model
+
+    Returns:
+        model (ProteinModel): A TAPE task model
+    """
+    model_cls = _get_task_model(base_model, task)
+    num_labels = TASK_LABEL_SIZE_MAPPING.get(task, -1)
+
+    if load_dir is not None:
+        model = model_cls.from_pretrained(load_dir, num_labels=num_labels)
+    else:
+        config_class = model_cls.config_class
+        if config_file is not None:
+            config = config_class.from_json_file(config_file)
+        else:
+            config = config_class()
+        config.num_labels = num_labels
+        model = model_cls(config)
+    model = model.cuda()
     return model

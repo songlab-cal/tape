@@ -14,6 +14,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
+from protein_models import ProteinModel
 import tape_pytorch.utils as utils
 import tape_pytorch.errors as errors
 import tape_pytorch.models as models
@@ -41,7 +42,7 @@ ForwardModelOutput = typing.Union[typing.Tuple[torch.Tensor, OutputDict],
 class ForwardRunner:
 
     def __init__(self,
-                 model: models.TAPEPreTrainedModel,
+                 model: ProteinModel,
                  device: torch.device = torch.device('cuda:0'),
                  n_gpu: int = 1):
 
@@ -49,8 +50,6 @@ class ForwardRunner:
         self.device = device
         self.n_gpu = n_gpu
         model = getattr(model, 'module', model)
-        self._loss_key = model.loss_key
-        self._metrics_key = model.metrics_key
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
@@ -59,8 +58,10 @@ class ForwardRunner:
             batch = {name: tensor.cuda(device=self.device, non_blocking=True)
                      for name, tensor in batch.items()}
         outputs = self.model(**batch)
-        loss = outputs[self.loss_key]
-        metrics = outputs[self.metrics_key]
+        # loss = outputs[self.loss_key]
+        # metrics = outputs[self.metrics_key]
+        loss = outputs[0]
+        metrics: typing.Dict[str, torch.Tensor] = {}
 
         if self.n_gpu > 1:
             loss = loss.mean()
@@ -71,19 +72,11 @@ class ForwardRunner:
         else:
             return loss, metrics
 
-    @property
-    def loss_key(self) -> str:
-        return self._loss_key
-
-    @property
-    def metrics_key(self) -> str:
-        return self._metrics_key
-
 
 class BackwardRunner(ForwardRunner):
 
     def __init__(self,
-                 model: models.TAPEPreTrainedModel,
+                 model: ProteinModel,
                  optimizer: optim.Optimizer,  # type: ignore
                  scheduler: typing.Optional[optim.lr_scheduler.LambdaLR] = None,
                  gradient_accumulation_steps: int = 1,
@@ -362,8 +355,7 @@ def run_train(model_type: str,
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)
 
-    model = utils.setup_model(
-        task, from_pretrained, model_config_file, model_type)
+    model = models.get(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
     viz = visualization.get(log_dir, exp_name, local_rank)
     viz.log_config(model.config.to_dict())
