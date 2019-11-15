@@ -26,7 +26,7 @@ BASE_MODEL_CLASSES = {
 
 def accuracy(scores, labels, ignore_index=-1):
     valid_mask = (labels != ignore_index)
-    predictions = scores.argmax(-1)
+    predictions = scores.float().argmax(-1)
     correct = (predictions == labels) * valid_mask
     return correct.sum().float() / valid_mask.sum().float()
 
@@ -367,34 +367,14 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
             self.base_model(input_ids, attention_mask=attention_mask))
 
         sequence_embedding = outputs[self.sequence_embedding_key]
-        # if token_lengths is not None:
-            # new_sequences = []
-            # for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
-                # expanded_seq = []
-                # for embed, n in zip(seq_embed, seq_tok_lengths):
-                    # if n == 0:
-                        # continue
-                    # embed = embed.repeat(n).view(n, self.config.hidden_size)
-                    # expanded_seq.append(embed)
-                # expanded_seq = torch.cat(expanded_seq, 0)
-                # new_sequences.append(expanded_seq)
-#
-            # max_len = max(seq.size(0) for seq in new_sequences)
-            # new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
-                             # for embed in new_sequences]
-#
-            # sequence_embedding = torch.stack(new_sequences, 0)
-            # sequence_embedding = sequence_embedding[:, :sequence_labels.size(1)]
-#
-        sequence_class_scores = self.predict(sequence_embedding)
         if token_lengths is not None:
             new_sequences = []
-            for seq_embed, seq_tok_lengths in zip(sequence_class_scores, token_lengths):
+            for seq_embed, seq_tok_lengths in zip(sequence_embedding, token_lengths):
                 expanded_seq = []
                 for embed, n in zip(seq_embed, seq_tok_lengths):
                     if n == 0:
                         continue
-                    embed = embed.repeat(n).view(n, embed.size(0))
+                    embed = embed.repeat(n).view(n, self.config.hidden_size)
                     expanded_seq.append(embed)
                 expanded_seq = torch.cat(expanded_seq, 0)
                 new_sequences.append(expanded_seq)
@@ -403,9 +383,29 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
             new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
                              for embed in new_sequences]
 
-            sequence_class_scores = torch.stack(new_sequences, 0)
-            sequence_class_scores = sequence_class_scores[:, :sequence_labels.size(1)]
-            sequence_class_scores = sequence_class_scores.contiguous()
+            sequence_embedding = torch.stack(new_sequences, 0)
+            sequence_embedding = sequence_embedding[:, :sequence_labels.size(1)]
+
+        sequence_class_scores = self.predict(sequence_embedding)
+        # if token_lengths is not None:
+            # new_sequences = []
+            # for seq_embed, seq_tok_lengths in zip(sequence_class_scores, token_lengths):
+                # expanded_seq = []
+                # for embed, n in zip(seq_embed, seq_tok_lengths):
+                    # if n == 0:
+                        # continue
+                    # embed = embed.repeat(n).view(n, embed.size(0))
+                    # expanded_seq.append(embed)
+                # expanded_seq = torch.cat(expanded_seq, 0)
+                # new_sequences.append(expanded_seq)
+
+            # max_len = max(seq.size(0) for seq in new_sequences)
+            # new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
+                             # for embed in new_sequences]
+
+            # sequence_class_scores = torch.stack(new_sequences, 0)
+            # sequence_class_scores = sequence_class_scores[:, :sequence_labels.size(1)]
+            # sequence_class_scores = sequence_class_scores.contiguous()
         outputs[self.prediction_key] = sequence_class_scores.contiguous()
 
         if sequence_labels is not None:
@@ -415,10 +415,30 @@ class SequenceToSequenceClassificationModel(TAPEPreTrainedModel):
                 ignore_index=-1)
             outputs[self.loss_key] = loss
 
-            outputs[self.metrics_key] = {'acc': accuracy(sequence_class_scores, sequence_labels)}
+            outputs[self.metrics_key] = {
+                'acc': accuracy(sequence_class_scores, sequence_labels)}
 
         # (sequence_class_prediction_loss), class_scores, (hidden_states), (attentions)
         return outputs
+
+    def expand_for_sequence(self, tensor, token_lengths):
+        new_sequences = []
+        for seq_embed, seq_tok_lengths in zip(tensor, token_lengths):
+            expanded_seq = []
+            for embed, n in zip(seq_embed, seq_tok_lengths):
+                if n == 0:
+                    continue
+                embed = embed.repeat(n).view(n, embed.size(0))
+                expanded_seq.append(embed)
+            expanded_seq = torch.cat(expanded_seq, 0)
+            new_sequences.append(expanded_seq)
+
+        max_len = max(seq.size(0) for seq in new_sequences)
+        new_sequences = [F.pad(embed, [0, 0, 0, max_len - embed.size(0)])
+                         for embed in new_sequences]
+
+        tensor = torch.stack(new_sequences, 0)
+        return tensor
 
 
 @registry.register_task_model('secondary_structure')

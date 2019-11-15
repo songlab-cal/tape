@@ -4,7 +4,6 @@ import typing
 import logging
 from pathlib import Path
 import sys
-from multiprocessing.managers import Namespace
 
 import torch
 import torch.distributed as dist
@@ -18,6 +17,7 @@ from tape_pytorch.registry import registry
 from tape_pytorch.datasets import TAPEDataset
 
 from .utils import get_effective_batch_size
+from ._sampler import BucketBatchSampler
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +99,8 @@ def setup_optimizer(model: PreTrainedModel,
         optimizer (AdamW): An AdamW optimizer
 
     """
-    no_decay = ["bias", "LayerNorm.bias", "LayerNorm.weight"]
     param_optimizer = list(model.named_parameters())
+    no_decay = ['bias', 'gamma', 'beta', 'LayerNorm']
     optimizer_grouped_parameters = [
         {
             "params": [
@@ -139,14 +139,24 @@ def setup_loader(task: str,
                  num_workers: int) -> DataLoader:
     collate_fn_cls = registry.get_collate_fn_class(task)
     sampler_type = (DistributedSampler if local_rank != -1 else RandomSampler)
+    batch_size = get_effective_batch_size(
+        batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu
+    # WARNING: this will fail if the primary sequence is not the first thing the dataset returns
+    batch_sampler = BucketBatchSampler(
+        sampler_type(dataset), batch_size, False, lambda x: len(x[0]), dataset)
 
     loader = DataLoader(  # type: ignore
         dataset,
-        batch_size=get_effective_batch_size(
-            batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu,
         num_workers=num_workers,
         collate_fn=collate_fn_cls(),
-        sampler=sampler_type(dataset))
+        batch_sampler=batch_sampler)
+
+    # loader = DataLoader(  # type: ignore
+        # dataset,
+        # batch_size=batch_size,
+        # num_workers=num_workers,
+        # collate_fn=collate_fn_cls(),
+        # sampler=sampler_type(dataset))
 
     return loader
 

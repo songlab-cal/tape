@@ -50,9 +50,9 @@ def create_base_parser() -> argparse.ArgumentParser:
     parser.add_argument('--local_rank', type=int, default=-1,
                         help='Local rank of process in distributed training. '
                              'Set by launch script.')
-    parser.add_argument('--tokenizer', choices=['bpe', 'dummy'], default='bpe',
+    parser.add_argument('--tokenizer', choices=['bpe', 'amino_acid'], default='amino_acid',
                         help='Tokenizes to use on the amino acid sequences')
-    parser.add_argument('--num-workers', default=16, type=int,
+    parser.add_argument('--num-workers', default=8, type=int,
                         help='Number of workers to use for multi-threaded data loading')
     parser.add_argument('--log-level', default=logging.INFO,
                         choices=['DEBUG', 'INFO', 'WARN', 'WARNING', 'ERROR',
@@ -98,6 +98,8 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser.add_argument('--patience', default=-1, type=int,
                         help="How many epochs without improvement to wait before ending "
                              "training")
+    parser.add_argument('--resume-from-checkpoint', action='store_true',
+                        help="whether to resume training from the checkpoint")
     return parser
 
 
@@ -237,8 +239,8 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
 
     save_outputs = training.run_eval_epoch(valid_loader, runner, is_master, save_callbacks)
 
-    target_key = getattr(model, 'module', model).TARGET_KEY
-    prediction_key = getattr(model, 'module', model).PREDICTION_KEY
+    target_key = getattr(model, 'module', model).target_key
+    prediction_key = getattr(model, 'module', model).prediction_key
     metrics = {name: metric(save_outputs[target_key], save_outputs[prediction_key])
                for name, metric in zip(args.metrics, metric_functions)}
     save_outputs.update(metrics)
@@ -313,6 +315,10 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
         distributed_train_parser = create_train_parser(distributed_parser)
         args = distributed_train_parser.parse_args()
 
+    # Define the experiment name here, instead of dealing with barriers and communication
+    # when getting the experiment name
+    exp_name = utils.get_expname(args.exp_name, args.task, args.model_type)
+    args.exp_name = exp_name
     utils.launch_process_group(
         run_train, args, args.nproc_per_node, args.nnodes,
         args.node_rank, args.master_addr, args.master_port)

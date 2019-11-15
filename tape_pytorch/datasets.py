@@ -148,7 +148,7 @@ class TAPEDataset(Dataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  data_file: Union[str, Path],
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
         super().__init__()
@@ -216,7 +216,7 @@ class PfamDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'holdout'):
@@ -295,7 +295,7 @@ class FluorescenceDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -332,7 +332,7 @@ class StabilityDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -369,7 +369,7 @@ class RemoteHomologyDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test_fold_holdout',
@@ -408,7 +408,7 @@ class ProteinnetDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'train_unfiltered', 'valid', 'test'):
@@ -426,7 +426,11 @@ class ProteinnetDataset(TAPEDataset):
 
         valid_mask = item['valid_mask']
         contact_map = np.less(squareform(pdist(item['tertiary'])), 8.0).astype(np.int64)
-        contact_map[~(valid_mask[:, None] & valid_mask[None, :])] = -1
+
+        yind, xind = np.indices(contact_map.shape)
+        invalid_mask = ~(valid_mask[:, None] & valid_mask[None, :])
+        invalid_mask |= np.abs(yind - xind) < 6
+        contact_map[invalid_mask] = -1
 
         return token_ids, attention_mask, contact_map
 
@@ -456,7 +460,7 @@ class SecondaryStructureDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'bpe',
+                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False,
                  num_classes: int = 3):
 

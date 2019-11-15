@@ -29,7 +29,7 @@ class TAPETokenizer(ABC):
 
     @abstractproperty
     def vocab_size(self) -> int:
-        return len(DummyTokenizer.TOKENS)
+        return NotImplemented
 
     @abstractmethod
     def tokenize(self, text: str) -> List[str]:
@@ -76,8 +76,8 @@ class TAPETokenizer(ABC):
         return cls()
 
 
-@registry.register_tokenizer('dummy')
-class DummyTokenizer(TAPETokenizer):
+@registry.register_tokenizer('amino_acid')
+class AminoAcidTokenizer(TAPETokenizer):
     r"""
     Constructs a DummyTokenizer
     """
@@ -90,7 +90,7 @@ class DummyTokenizer(TAPETokenizer):
 
     @property
     def vocab_size(self) -> int:
-        return len(DummyTokenizer.TOKENS)
+        return len(self.TOKENS)
 
     def tokenize(self, text: str) -> List[str]:
         return [x for x in text]
@@ -98,14 +98,14 @@ class DummyTokenizer(TAPETokenizer):
     def convert_token_to_id(self, token: str) -> int:
         """ Converts a token (str/unicode) in an id using the vocab. """
         try:
-            return DummyTokenizer.VOCAB[token]
+            return self.VOCAB[token]
         except KeyError:
             raise KeyError(f"Unrecognized token: '{token}'")
 
     def convert_id_to_token(self, index: int) -> str:
         """Converts an index (integer) in a token (string/unicode) using the vocab."""
         try:
-            return DummyTokenizer.TOKENS[index]
+            return self.TOKENS[index]
         except IndexError:
             raise IndexError(f"Unrecognized index: '{index}'")
 
@@ -118,8 +118,9 @@ class DummyTokenizer(TAPETokenizer):
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
         """
-
-        return [self.convert_token_to_id(self.cls_token)] + token_ids + [self.convert_token_to_id(self.sep_token)]
+        cls_token = [self.convert_token_to_id(self.cls_token)]
+        sep_token = [self.convert_token_to_id(self.sep_token)]
+        return cls_token + token_ids + sep_token
 
     def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
         """

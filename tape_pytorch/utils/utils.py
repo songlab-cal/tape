@@ -11,9 +11,15 @@ from collections import defaultdict
 
 import numpy as np
 import torch
+import torch.nn as nn
 from torch.utils.data import Dataset
 import torch.distributed as dist
-from tensorboardX import SummaryWriter
+
+try:
+    from apex import amp
+    APEX_FOUND = True
+except ImportError:
+    APEX_FOUND = False
 
 
 logger = logging.getLogger(__name__)
@@ -58,32 +64,13 @@ def path_to_datetime(path: Path) -> datetime:
     return pathdatetime
 
 
-def get_expname(exp_name: typing.Optional[str]) -> str:
+def get_expname(exp_name: typing.Optional[str],
+                task: typing.Optional[str] = None,
+                model_type: typing.Optional[str] = None) -> str:
     if exp_name is None:
         time_stamp = strftime("%y-%m-%d-%H-%M-%S", gmtime())
-        exp_name = time_stamp + "_{:0>6d}".format(random.randint(0, int(1e6)))
+        exp_name = f"{task}_{model_type}_{time_stamp}_{random.randint(0, int(1e6)):0>6d}"
     return exp_name
-
-
-def get_savepath_and_expname(output_dir: str,
-                             exp_name: typing.Optional[str],
-                             is_master: bool = True) -> typing.Tuple[Path, str]:
-    if is_master:
-        exp_name = get_expname(exp_name)
-        save_path = Path(output_dir) / exp_name
-        save_path.mkdir(parents=True, exist_ok=True)
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-    else:
-        torch.distributed.barrier()
-        if exp_name is None:
-            save_files = Path(output_dir).iterdir()
-            save_path = max(save_files, key=path_to_datetime)
-            exp_name = save_path.name
-        else:
-            save_path = Path(output_dir) / exp_name
-
-    return save_path, exp_name
 
 
 def set_random_seeds(seed: int, n_gpu: int) -> None:
@@ -118,59 +105,68 @@ def get_num_train_optimization_steps(dataset: Dataset,
     return int(len(dataset) / batch_size * num_train_epochs)
 
 
-class TBLogger:
-
-    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str, local_rank: int):
-        is_master = local_rank in (-1, 0)
-        if is_master:
-            log_dir = Path(log_dir) / exp_name
-            logger.info(f"tensorboard file at: {log_dir}")
-            self.logger = SummaryWriter(log_dir=str(log_dir))
-        self._is_master = is_master
-
-    def line_plot(self, step, val, split, key, xlabel="None") -> None:
-        if self._is_master:
-            self.logger.add_scalar(split + "/" + key, val, step)
-
-
 class MetricsAccumulator:
 
     def __init__(self, smoothing: float = 0.95):
-        self._currloss: typing.Optional[float] = None
+        self._loss_tmp = 0.
+        self._smoothloss: typing.Optional[float] = None
         self._totalloss = 0.
-        self._nupdates = 0
-        self._smoothing = smoothing
-        self._currmetrics: typing.Dict[str, float] = {}
+        self._metricstmp: typing.Dict[str, float] = defaultdict(lambda: 0.0)
+        self._smoothmetrics: typing.Dict[str, float] = {}
         self._totalmetrics: typing.Dict[str, float] = defaultdict(lambda: 0.0)
 
-    def update(self, loss: float, metrics: typing.Dict[str, float]):
-        if self._currloss is None:
-            self._currloss = loss
-        else:
-            self._currloss = (self._smoothing) * self._currloss + (1 - self._smoothing) * loss
+        self._nacc_steps = 0
+        self._nupdates = 0
+        self._smoothing = smoothing
 
+    def update(self, loss: float, metrics: typing.Dict[str, float], step: bool = True) -> None:
+        self._loss_tmp += loss
         for name, value in metrics.items():
-            if name in self._currmetrics:
-                currvalue = self._currmetrics[name]
+            self._metricstmp[name] += value
+        self._nacc_steps += 1
+
+        if step:
+            self.step()
+
+    def step(self) -> typing.Tuple[float, typing.Dict[str, float]]:
+        loss_tmp = self._loss_tmp / self._nacc_steps
+        metricstmp = {name: value / self._nacc_steps
+                      for name, value in self._metricstmp.items()}
+
+        if self._smoothloss is None:
+            self._smoothloss = loss_tmp
+        else:
+            self._smoothloss *= self._smoothing
+            self._smoothloss += (1 - self._smoothing) * loss_tmp
+        self._totalloss += loss_tmp
+
+        for name, value in metricstmp.items():
+            if name in self._smoothmetrics:
+                currvalue = self._smoothmetrics[name]
                 newvalue = currvalue * self._smoothing + value * (1 - self._smoothing)
             else:
                 newvalue = value
 
-            self._currmetrics[name] = newvalue
+            self._smoothmetrics[name] = newvalue
             self._totalmetrics[name] += value
 
-        self._totalloss += loss
         self._nupdates += 1
 
+        self._nacc_steps = 0
+        self._loss_tmp = 0
+        self._metricstmp = defaultdict(lambda: 0.0)
+
+        return loss_tmp, metricstmp
+
     def loss(self) -> float:
-        if self._currloss is None:
+        if self._smoothloss is None:
             raise RuntimeError("Trying to get the loss without any updates")
-        return self._currloss
+        return self._smoothloss
 
     def metrics(self) -> typing.Dict[str, float]:
         if self._nupdates == 0:
             raise RuntimeError("Trying to get metrics without any updates")
-        return dict(self._currmetrics)
+        return dict(self._smoothmetrics)
 
     def final_loss(self) -> float:
         return self._totalloss / self._nupdates
@@ -233,3 +229,28 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
                        f"{eff_batch_size}")
             raise RuntimeError(message)
         return False
+
+
+def save_state(save_directory: typing.Union[str, Path],
+               model: nn.Module,
+               optimizer: torch.optim.Optimizer,  # type: ignore
+               scheduler: torch.optim.lr_scheduler.LambdaLR,
+               epoch: int) -> None:
+    save_directory = Path(save_directory)
+    if not save_directory.exists():
+        save_directory.mkdir()
+    else:
+        assert save_directory.is_dir(), "Save path should be a directory"
+    model_to_save = getattr(model, 'module', model)
+    model_to_save.save_pretrained(save_directory)
+    optimizer_state: typing.Dict[str, typing.Any] = {
+        'optimizer': optimizer.state_dict(),
+        'scheduler': scheduler.state_dict(),
+        'epoch': epoch}
+    if APEX_FOUND:
+        optimizer_state['master params'] = list(amp.master_params(optimizer))
+        try:
+            optimizer_state['amp'] = amp.state_dict()
+        except AttributeError:
+            pass
+    torch.save(optimizer_state, save_directory / 'checkpoint.bin')
