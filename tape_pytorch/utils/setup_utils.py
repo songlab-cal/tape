@@ -143,7 +143,7 @@ def setup_loader(task: str,
         batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu
     # WARNING: this will fail if the primary sequence is not the first thing the dataset returns
     batch_sampler = BucketBatchSampler(
-        sampler_type(dataset), batch_size, False, lambda x: len(x[0]))
+        sampler_type(dataset), batch_size, False, lambda x: len(x[0]), dataset)
 
     loader = DataLoader(  # type: ignore
         dataset,

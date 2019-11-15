@@ -23,23 +23,23 @@ class SortedSampler(Sampler):
     """
 
     def __init__(self,
-                 data_source,
+                 dataset,
                  sort_key: typing.Callable[[int], typing.Any],
                  indices: typing.Optional[typing.Iterable[int]] = None):
-        super().__init__(data_source)
-        self.data_source = data_source
+        super().__init__(dataset)
+        self.dataset = dataset
         self.sort_key = sort_key
         if indices is None:
-            sort_keys = map(sort_key, data_source)
+            sort_keys = map(sort_key, dataset)
         else:
-            sort_keys = ((i, sort_key(data_source[i])) for i in indices)
+            sort_keys = ((i, sort_key(dataset[i])) for i in indices)
         self.sorted_indices = [i for i, _ in sorted(sort_keys, key=operator.itemgetter(1))]
 
     def __iter__(self):
         return iter(self.sorted_indices)
 
     def __len__(self):
-        return len(self.data_source)
+        return len(self.dataset)
 
 
 class BucketBatchSampler(BatchSampler):
@@ -76,16 +76,17 @@ class BucketBatchSampler(BatchSampler):
                  batch_size,
                  drop_last,
                  sort_key,
+                 dataset,
                  bucket_size_multiplier=100):
         super().__init__(sampler, batch_size, drop_last)
         self.sort_key = sort_key
-        self.data_source = sampler.data_source
+        self.dataset = dataset
         self.bucket_sampler = BatchSampler(
             sampler, min(batch_size * bucket_size_multiplier, len(sampler)), False)
 
     def __iter__(self):
         for bucket in self.bucket_sampler:
-            sorted_sampler = SortedSampler(self.data_source, self.sort_key, indices=bucket)
+            sorted_sampler = SortedSampler(self.dataset, self.sort_key, indices=bucket)
             for batch in SubsetRandomSampler(
                     list(BatchSampler(sorted_sampler, self.batch_size, self.drop_last))):
                 yield batch
