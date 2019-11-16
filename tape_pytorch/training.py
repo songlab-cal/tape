@@ -357,7 +357,7 @@ def run_train(model_type: str,
 
     model = models.get(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
-    viz = visualization.get(log_dir, exp_name, local_rank)
+    viz = visualization.get(log_dir, exp_name, local_rank, debug=debug)
     viz.log_config(model.config.to_dict())
     viz.watch(model)
 

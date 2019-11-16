@@ -119,13 +119,6 @@ def setup_loader(task: str,
         collate_fn=collate_fn_cls(),
         batch_sampler=batch_sampler)
 
-    # # loader = DataLoader(  # type: ignore
-        # # dataset,
-        # # batch_size=batch_size,
-        # # num_workers=num_workers,
-        # # collate_fn=collate_fn_cls(),
-        # # sampler=sampler_type(dataset))
-
     return loader
 
 
