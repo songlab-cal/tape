@@ -25,6 +25,7 @@ try:
     import apex_C
     from apex.amp import _amp_state
     from apex.parallel.distributed import flat_dist_call
+    from apex.parallel.distributed import DistributedDataParallel as DDP
     APEX_FOUND = True
 except ImportError:
     APEX_FOUND = False
@@ -105,14 +106,19 @@ class BackwardRunner(ForwardRunner):
 
     def backward(self, loss) -> None:
         if self.fp16:
-            with amp.scale_loss(loss, self.optimizer, delay_overflow_check=True) as scaled_loss:
+            delay_overflow_check = self._local_rank != -1
+            with amp.scale_loss(loss, self.optimizer,
+                                delay_overflow_check=delay_overflow_check) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
 
     def step(self) -> None:
-        if self._local_rank == -1 or not self.fp16:
-            nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
+        if self._local_rank == -1:
+            self._step()
+        elif not self.fp16:
+            # TODO: Can you do this allreduce after accumulation also?
             self._step()
         else:
             self._step_distributed_fp16()
@@ -124,9 +130,6 @@ class BackwardRunner(ForwardRunner):
         self._global_step += 1
 
     def _step_distributed_fp16(self) -> None:
-        # Optimized step function from https://github.com/NVIDIA/DeepLearningExamples
-        # Only performs allreduce after gradient accumulation, which reduces communication
-        nn.utils.clip_grad_norm_(self.model.parameters(), self.max_grad_norm)
         # manually allreduce gradients after all accumulation steps
         # check for Inf/NaN
         # 1. allocate an uninitialized buffer for flattened gradient
@@ -343,7 +346,7 @@ def run_train(model_type: str,
     if is_master:
         # save all the hidden parameters.
         save_path.mkdir(parents=True, exist_ok=True)
-        with (save_path / 'config.json').open('w') as f:
+        with (save_path / 'args.json').open('w') as f:
             json.dump(input_args, f)
 
     utils.barrier_if_distributed()
@@ -366,7 +369,7 @@ def run_train(model_type: str,
         task, from_pretrained, model_config_file, model_type)
     optimizer = utils.setup_optimizer(model, learning_rate)
     viz = visualization.get(log_dir, exp_name, local_rank)
-    viz.log_config(model.config.to_dict())
+    viz.log_config(input_args)
     viz.watch(model)
 
     logger.info(
@@ -402,9 +405,11 @@ def run_train(model_type: str,
         start_epoch = 0
 
     if local_rank != -1:
-        # model = DDP(model)
-        flat_dist_call([param.data for param in model.parameters()],
-                       torch.distributed.broadcast, (0,))
+        if fp16:
+            model = DDP(model)
+        else:
+            flat_dist_call([param.data for param in model.parameters()],
+                           torch.distributed.broadcast, (0,))
     elif n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
 
