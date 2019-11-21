@@ -1,5 +1,4 @@
 import typing
-import os
 import logging
 from timeit import default_timer as timer
 import itertools
@@ -338,7 +337,7 @@ def run_train(model_type: str,
               exp_name: typing.Optional[str] = None,
               from_pretrained: typing.Optional[str] = None,
               log_dir: str = './logs',
-              no_eval: bool = False,
+              eval_freq: int = 1,
               save_freq: typing.Union[int, str] = 1,
               model_config_file: typing.Optional[str] = None,
               data_dir: str = './data',
@@ -353,6 +352,8 @@ def run_train(model_type: str,
               log_level: typing.Union[str, int] = logging.INFO,
               patience: int = -1,
               resume_from_checkpoint: bool = False) -> None:
+
+    # SETUP AND LOGGING CODE #
     input_args = locals()
     device, n_gpu, is_master = utils.setup_distributed(
         local_rank, no_cuda)
@@ -433,8 +434,8 @@ def run_train(model_type: str,
             f"Only recongized string value for save_freq is 'improvement'"
             f", received: {save_freq}")
 
-    if save_freq == 'improvement' and no_eval:
-        raise ValueError("Cannot set save_freq to 'improvement' and no_eval")
+    if save_freq == 'improvement' and eval_freq <= 0:
+        raise ValueError("Cannot set save_freq to 'improvement' and eval_freq < 0")
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -454,11 +455,13 @@ def run_train(model_type: str,
             return num_epochs_no_improvement == 0
 
     utils.barrier_if_distributed()
+
+    # ACTUAL TRAIN/EVAL LOOP #
     with utils.wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation_steps):
         for epoch_id in range(start_epoch, num_train_epochs):
             run_train_epoch(epoch_id, train_loader, runner,
                             viz, num_log_iter, gradient_accumulation_steps)
-            if not no_eval:
+            if eval_freq > 0 and epoch_id % eval_freq == 0:
                 val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -489,5 +492,5 @@ def run_train(model_type: str,
                 else:
                     break
     logger.info(f"Finished training after {num_train_epochs} epochs.")
-    if not no_eval:
+    if best_val_loss != float('inf'):
         logger.log(35, f"Best Val Loss: {best_val_loss}")

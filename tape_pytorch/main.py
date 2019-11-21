@@ -40,23 +40,23 @@ def create_base_parser() -> argparse.ArgumentParser:
                                      add_help=False)
     parser.add_argument('model_type', choices=list(models.KNOWN_MODELS),
                         help='Base model class to run')
-    parser.add_argument('--model-config-file', default=None, type=utils.check_is_file,
+    parser.add_argument('--model_config_file', default=None, type=utils.check_is_file,
                         help='Config file for model')
-    parser.add_argument('--data-dir', default='./data', type=utils.check_is_dir,
+    parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
                         help='Directory from which to load task data')
-    parser.add_argument('--vocab-file', default='data/pfam.model', type=utils.check_is_file,
+    parser.add_argument('--vocab_file', default='data/pfam.model', type=utils.check_is_file,
                         help='Pretrained tokenizer vocab file')
-    parser.add_argument('--output-dir', default='./results', type=str)
-    parser.add_argument('--no-cuda', action='store_true', help='CPU-only flag')
+    parser.add_argument('--output_dir', default='./results', type=str)
+    parser.add_argument('--no_cuda', action='store_true', help='CPU-only flag')
     parser.add_argument('--seed', default=42, type=int, help='Random seed to use')
     parser.add_argument('--local_rank', type=int, default=-1,
                         help='Local rank of process in distributed training. '
                              'Set by launch script.')
     parser.add_argument('--tokenizer', choices=['bpe', 'amino_acid'], default='amino_acid',
                         help='Tokenizes to use on the amino acid sequences')
-    parser.add_argument('--num-workers', default=8, type=int,
+    parser.add_argument('--num_workers', default=8, type=int,
                         help='Number of workers to use for multi-threaded data loading')
-    parser.add_argument('--log-level', default=logging.INFO,
+    parser.add_argument('--log_level', default=logging.INFO,
                         choices=['DEBUG', 'INFO', 'WARN', 'WARNING', 'ERROR',
                                  logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR],
                         help="log level for the experiment")
@@ -70,37 +70,38 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                                      parents=[base_parser])
     parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
                         help='TAPE Task to train/eval on')
-    parser.add_argument('--learning-rate', default=1e-4, type=float,
+    parser.add_argument('--learning_rate', default=1e-4, type=float,
                         help='Learning rate')
-    parser.add_argument('--batch-size', default=1024, type=int,
+    parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
-    parser.add_argument('--num-train-epochs', default=10, type=int,
+    parser.add_argument('--num_train_epochs', default=10, type=int,
                         help='Number of training epochs')
-    parser.add_argument('--num-log-iter', default=20, type=int,
+    parser.add_argument('--num_log_iter', default=20, type=int,
                         help='Number of training steps per log iteration')
     parser.add_argument('--fp16', action='store_true', help='Whether to use fp16 weights')
-    parser.add_argument('--warmup-steps', default=10000, type=int,
+    parser.add_argument('--warmup_steps', default=10000, type=int,
                         help='Number of learning rate warmup steps')
-    parser.add_argument('--gradient-accumulation-steps', default=1, type=int,
+    parser.add_argument('--gradient_accumulation_steps', default=1, type=int,
                         help='Number of forward passes to make for each backwards pass')
-    parser.add_argument('--loss-scale', default=0, type=int,
+    parser.add_argument('--loss_scale', default=0, type=int,
                         help='Loss scaling. Only used during fp16 training.')
-    parser.add_argument('--max-grad-norm', default=1.0, type=float,
+    parser.add_argument('--max_grad_norm', default=1.0, type=float,
                         help='Maximum gradient norm')
-    parser.add_argument('--exp-name', default=None, type=str,
+    parser.add_argument('--exp_name', default=None, type=str,
                         help='Name to give to this experiment')
-    parser.add_argument('--from-pretrained', default=None, type=utils.check_is_dir,
+    parser.add_argument('--from_pretrained', default=None, type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
-    parser.add_argument('--log-dir', default='./logs', type=str)
-    parser.add_argument('--no-eval', action='store_true',
-                        help='Flag to not run eval pass. Useful for gridsearching.')
-    parser.add_argument('--save-freq', default=1, type=utils.int_or_str,
+    parser.add_argument('--log_dir', default='./logs', type=str)
+    parser.add_argument('--eval_freq', type=int, default=1,
+                        help="Frequency of eval pass. A value <= 0 means the eval pass is "
+                             "not run")
+    parser.add_argument('--save_freq', default=1, type=utils.int_or_str,
                         help="How often to save the model during training. Either an integer "
                              "frequency or the string 'improvement'")
     parser.add_argument('--patience', default=-1, type=int,
                         help="How many epochs without improvement to wait before ending "
                              "training")
-    parser.add_argument('--resume-from-checkpoint', action='store_true',
+    parser.add_argument('--resume_from_checkpoint', action='store_true',
                         help="whether to resume training from the checkpoint")
     return parser
 
@@ -112,9 +113,9 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                         help='TAPE Task to train/eval on')
     parser.add_argument('from_pretrained', type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
-    parser.add_argument('--batch-size', default=1024, type=int,
+    parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
-    parser.add_argument('--save-callback', default=['save_predictions'],
+    parser.add_argument('--save_callback', default=['save_predictions'],
                         help=f'Callbacks to use when saving. '
                              f'Choices: {list(registry.callback_name_mapping.keys())}',
                         nargs='*')
@@ -137,7 +138,7 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Name of output file')
     parser.add_argument('from_pretrained', type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')
-    parser.add_argument('--batch-size', default=1024, type=int,
+    parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
     parser.set_defaults(task='embed')
     return parser
