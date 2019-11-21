@@ -23,6 +23,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+FloatOrTensor = typing.Union[float, torch.Tensor]
 
 
 def int_or_str(arg: str) -> typing.Union[int, str]:
@@ -119,16 +120,24 @@ class MetricsAccumulator:
         self._nupdates = 0
         self._smoothing = smoothing
 
-    def update(self, loss: float, metrics: typing.Dict[str, float], step: bool = True) -> None:
+    def update(self,
+               loss: FloatOrTensor,
+               metrics: typing.Dict[str, FloatOrTensor],
+               step: bool = True) -> None:
+        if isinstance(loss, torch.Tensor):
+            loss = loss.item()
+
         self._loss_tmp += loss
         for name, value in metrics.items():
+            if isinstance(value, torch.Tensor):
+                value = value.item()
             self._metricstmp[name] += value
         self._nacc_steps += 1
 
         if step:
             self.step()
 
-    def step(self) -> typing.Tuple[float, typing.Dict[str, float]]:
+    def step(self) -> typing.Dict[str, float]:
         loss_tmp = self._loss_tmp / self._nacc_steps
         metricstmp = {name: value / self._nacc_steps
                       for name, value in self._metricstmp.items()}
@@ -156,7 +165,8 @@ class MetricsAccumulator:
         self._loss_tmp = 0
         self._metricstmp = defaultdict(lambda: 0.0)
 
-        return loss_tmp, metricstmp
+        metricstmp['loss'] = loss_tmp
+        return metricstmp
 
     def loss(self) -> float:
         if self._smoothloss is None:

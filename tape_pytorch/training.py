@@ -87,6 +87,14 @@ class ForwardRunner:
         else:
             return loss, metrics
 
+    def train(self):
+        self.model.train()
+        return self
+
+    def eval(self):
+        self.model.eval()
+        return self
+
 
 class BackwardRunner(ForwardRunner):
 
@@ -201,37 +209,39 @@ def run_train_epoch(epoch_id: int,
     accumulator = utils.MetricsAccumulator(smoothing)
 
     torch.set_grad_enabled(True)
-    runner.model.train()
+    runner.train()
+
+    def make_log_str(step: int, time: float) -> str:
+        ep_percent = epoch_id + step / len(train_loader)
+        if runner.scheduler is not None:
+            curr_lr = runner.scheduler.get_lr()[0]  # type: ignore
+        else:
+            curr_lr = runner.optimizer.param_groups[0]['lr']
+
+        print_str = []
+        print_str.append(f"[Ep: {ep_percent:.2f}]")
+        print_str.append(f"[Iter: {runner.global_step}]")
+        print_str.append(f"[Time: {time:5.2f}s]")
+        print_str.append(f"[Loss: {accumulator.loss():.5g}]")
+
+        for name, value in accumulator.metrics().items():
+            print_str.append(f"[{name.capitalize()}: {value:.5g}]")
+
+        print_str.append(f"[LR: {curr_lr:.5g}]")
+        return ''.join(print_str)
 
     start_t = timer()
     for step, batch in enumerate(train_loader):
         loss, metrics = runner.forward(batch)  # type: ignore
         runner.backward(loss)
-        accumulator.update(
-            loss.item(), {name: value.item() for name, value in metrics.items()}, step=False)
+        accumulator.update(loss, metrics, step=False)
         if (step + 1) % gradient_accumulation_steps == 0:
             runner.step()
-            loss_tmp, metrics_tmp = accumulator.step()
-            metrics_tmp['loss'] = loss_tmp
-            viz.log_metrics(metrics_tmp, "train", runner.global_step)
+            viz.log_metrics(accumulator.step(), "train", runner.global_step)
             if runner.global_step % num_log_iter == 0:
                 end_t = timer()
-                ep = epoch_id + step / float(len(train_loader))
-                print_str = [
-                    f"[Ep: {ep:.2f}]",
-                    f"[Iter: {runner.global_step}]",
-                    f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {accumulator.loss():.5g}]"]
-                print_str += [f"[{name.capitalize()}: {value:.5g}]"
-                              for name, value in accumulator.metrics().items()]
-                if runner.scheduler is not None:
-                    curr_lr = runner.scheduler.get_lr()[0]  # type: ignore
-                else:
-                    curr_lr = runner.optimizer.param_groups[0]['lr']
-                print_str += [f"[LR: {curr_lr:.5g}]"]
+                logger.info(make_log_str(step, end_t - start_t))
                 start_t = end_t
-
-                logger.info(''.join(print_str))
 
     final_print_str = f"Train: [Loss: {accumulator.final_loss():.5g}]"
     for name, value in accumulator.final_metrics().items():
