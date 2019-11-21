@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
 import tape_pytorch.tokenizers as tokenizers
-from tape_pytorch.registry import registry
+from .registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class LMDBDataset(Dataset):
 class PaddedBatch(ABC):
 
     @abstractmethod
-    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Tuple[np.ndarray]:
+    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Dict[str, np.ndarray]:
         return NotImplemented
 
     def _pad(self, sequences: Sequence[np.ndarray], constant_value=0) -> torch.Tensor:
@@ -142,7 +142,6 @@ class PaddedBatch(ABC):
         return torch.from_numpy(array)
 
 
-@registry.register_dataset('embed')
 class TAPEDataset(Dataset):
 
     def __init__(self,
@@ -156,8 +155,7 @@ class TAPEDataset(Dataset):
 
         if isinstance(tokenizer, str):
             model_file = data_path / 'pfam.model'
-            tokenizer = registry.get_tokenizer_class(tokenizer).from_pretrained(
-                model_file=model_file)
+            tokenizer = tokenizers.get(tokenizer).from_pretrained(model_file=model_file)
 
         assert isinstance(tokenizer, tokenizers.TAPETokenizer)
         self.tokenizer = tokenizer
@@ -191,7 +189,6 @@ class TAPEDataset(Dataset):
         return item, tokens, input_mask
 
 
-@registry.register_collate_fn('embed')
 class EmbedBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -203,7 +200,6 @@ class EmbedBatch(PaddedBatch):
                 'input_mask': input_mask}
 
 
-@registry.register_dataset('mlm')
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
@@ -270,7 +266,6 @@ class PfamDataset(TAPEDataset):
         return masked_tokens, labels
 
 
-@registry.register_collate_fn('mlm')
 class PfamBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -289,7 +284,6 @@ class PfamBatch(PaddedBatch):
                 # 'family_labels': family}
 
 
-@registry.register_dataset('fluorescence')
 class FluorescenceDataset(TAPEDataset):
 
     def __init__(self,
@@ -312,7 +306,6 @@ class FluorescenceDataset(TAPEDataset):
         return token_ids, input_mask, float(item['log_fluorescence'][0])
 
 
-@registry.register_collate_fn('fluorescence')
 class FluorescenceBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -326,7 +319,6 @@ class FluorescenceBatch(PaddedBatch):
                 'true_value': fluorescence_true_value}
 
 
-@registry.register_dataset('stability')
 class StabilityDataset(TAPEDataset):
 
     def __init__(self,
@@ -349,7 +341,6 @@ class StabilityDataset(TAPEDataset):
         return token_ids, input_mask, float(item['stability_score'][0])
 
 
-@registry.register_collate_fn('stability')
 class StabilityBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -363,7 +354,6 @@ class StabilityBatch(PaddedBatch):
                 'true_value': stability_score}
 
 
-@registry.register_dataset('remote_homology')
 class RemoteHomologyDataset(TAPEDataset):
 
     def __init__(self,
@@ -388,7 +378,6 @@ class RemoteHomologyDataset(TAPEDataset):
         return token_ids, input_mask, item['fold_label']
 
 
-@registry.register_collate_fn('remote_homology')
 class RemoteHomologyBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -402,7 +391,6 @@ class RemoteHomologyBatch(PaddedBatch):
                 'sequence_label': fold_label}
 
 
-@registry.register_dataset('contact_prediction')
 class ProteinnetDataset(TAPEDataset):
 
     def __init__(self,
@@ -438,7 +426,6 @@ class ProteinnetDataset(TAPEDataset):
         return 1000000 if 'train' in self._mode else super().__len__()
 
 
-@registry.register_collate_fn('contact_prediction')
 class ProteinnetBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -454,7 +441,6 @@ class ProteinnetBatch(PaddedBatch):
         return batch
 
 
-@registry.register_dataset('secondary_structure')
 class SecondaryStructureDataset(TAPEDataset):
 
     def __init__(self,
@@ -495,7 +481,6 @@ class SecondaryStructureDataset(TAPEDataset):
         return token_ids, input_mask, labels, token_lengths
 
 
-@registry.register_collate_fn('secondary_structure')
 class SecondaryStructureBatch(PaddedBatch):
 
     def __call__(self, batch):
@@ -513,3 +498,13 @@ class SecondaryStructureBatch(PaddedBatch):
             batch['token_lengths'] = token_lengths
 
         return batch
+
+
+registry.register_task('embed', TAPEDataset, EmbedBatch)
+registry.register_task('mlm', PfamDataset, PfamBatch)
+registry.register_task('fluorescence', FluorescenceDataset, FluorescenceBatch)
+registry.register_task('stability', StabilityDataset, StabilityBatch)
+registry.register_task('remote_homology', RemoteHomologyDataset, RemoteHomologyBatch, 1195)
+registry.register_task('contact_prediction', ProteinnetDataset, ProteinnetBatch)
+registry.register_task(
+    'secondary_structure', SecondaryStructureDataset, SecondaryStructureBatch, 3)

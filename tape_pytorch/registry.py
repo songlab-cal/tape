@@ -1,71 +1,80 @@
-from typing import Dict, Type, Callable
-
-import torch.nn as nn
+from typing import Dict, Type, Callable, Optional, NamedTuple, List, Any
 from torch.utils.data import Dataset
+from protein_models import ProteinModel
+
+
+class TAPETaskSpec(NamedTuple):
+    """
+    Attributes
+    ----------
+    name (str):
+        The name of the TAPE task
+    dataset (Type[Dataset]):
+        The dataset used in the TAPE task
+    collate_fn (Callable[[List], Dict[str, Any]]):
+        The collate function used to return batches for this task
+    num_labels (int):
+        number of labels used if this is a classification task
+    models (Dict[str, ProteinModel]):
+        The set of models that can be used for this task. Default: {}.
+    """
+
+    name: str
+    dataset: Type[Dataset]
+    collate_fn: Type[Callable[[List], Dict[str, Any]]]
+    num_labels: int = -1
+    models: Dict[str, ProteinModel] = {}
+
+    def register_model(self, model_name: str, model_cls: Optional[Type[ProteinModel]] = None):
+        if model_cls is not None:
+            if model_name in self.models:
+                raise KeyError(
+                    f"A model with name '{model_name}' is already registered for this task")
+            self.models[model_name] = model_cls
+            return model_cls
+        else:
+            return lambda model_cls: self.register_model(model_name, model_cls)
+
+    def get_model(self, model_name: str) -> Type[ProteinModel]:
+        return self.models[model_name]
 
 
 class Registry:
     r"""Class for registry object which acts as the
     central repository for TAPE."""
 
-    dataset_name_mapping: Dict[str, Type[Dataset]] = {}
-    model_name_mapping: Dict[str, Type] = {}
-    task_model_name_mapping: Dict[str, Type] = {}
-    collate_fn_name_mapping: Dict[str, Type[Callable]] = {}
+    task_name_mapping: Dict[str, TAPETaskSpec] = {}
     tokenizer_name_mapping: Dict[str, Type] = {}
     callback_name_mapping: Dict[str, Callable] = {}
     metric_name_mapping: Dict[str, Callable] = {}
 
     @classmethod
-    def register_dataset(cls, name: str) -> Callable[[Type[Dataset]], Type[Dataset]]:
-        r"""Register a dataset to registry with key 'name'
-
-        Args:
-            name: Key with which the dataset will be registered.
-
-        Usage::
-            from tape_pytorch.registry import registry
-            from torch.utils.data import Dataset
-
-            @registry.register_dataset('fluorescence')
-            class FluorescenceDataset(Dataset):
-                ...
-        """
-
-        def wrap(task_cls: Type[Dataset]) -> Type[Dataset]:
-            assert issubclass(task_cls, Dataset), \
-                "All datasets must inherit torch Dataset class"
-            cls.dataset_name_mapping[name] = task_cls
-            return task_cls
-
-        return wrap
+    def register_task(cls,
+                      task_name: str,
+                      dataset: Type[Dataset],
+                      collate_fn: Type[Callable[[List], Dict[str, Any]]],
+                      num_labels: int = -1,
+                      models: Optional[Dict[str, ProteinModel]] = None) -> TAPETaskSpec:
+        if models is None:
+            models = {}
+        task_spec = TAPETaskSpec(task_name, dataset, collate_fn, num_labels, models)
+        return cls.register_task_spec(task_name, task_spec)
 
     @classmethod
-    def register_model(cls, name: str) -> Callable[[Type[nn.Module]], Type[nn.Module]]:
-        r"""Register a model to registry with key 'name'
-
-        Args:
-            name: Key with which the model will be registered.
-
-        Usage::
-            from tape_pytorch.registry import registry
-            import torch.nn as nn
-
-            @registry.register_model('lstm')
-            class LSTM(nn.Module):
-                ...
-        """
-
-        def wrap(model_cls: Type[nn.Module]) -> Type[nn.Module]:
-            assert issubclass(model_cls, nn.Module), \
-                "All models must inherit torch Module class"
-            cls.model_name_mapping[name] = model_cls
-            return model_cls
-
-        return wrap
+    def register_task_spec(cls, task_name: str, task_spec: Optional[TAPETaskSpec] = None):
+        if task_spec is not None:
+            if task_name in cls.task_name_mapping:
+                raise KeyError(f"A task with name '{task_name}' is already registered")
+            cls.task_name_mapping[task_name] = task_spec
+            return task_spec
+        else:
+            return lambda task_spec: cls.register_task_spec(task_name, task_spec)
 
     @classmethod
-    def register_task_model(cls, name: str) -> Callable[[Type[nn.Module]], Type[nn.Module]]:
+    def register_task_model(cls,
+                            task_name: str,
+                            model_name: str,
+                            model_cls: Optional[Type[ProteinModel]] = None):
         r"""Register a task model to registry with key 'name'
 
         Args:
@@ -80,40 +89,11 @@ class Registry:
             class SequenceToFloatModel(nn.Module):
                 ...
         """
-
-        def wrap(model_cls: Type[nn.Module]) -> Type[nn.Module]:
-            import torch.nn as nn
-            assert issubclass(model_cls, nn.Module), \
-                "All models must inherit torch Module class"
-            cls.task_model_name_mapping[name] = model_cls
-            return model_cls
-
-        return wrap
-
-    @classmethod
-    def register_collate_fn(cls, name: str) -> Callable[[Type[Callable]], Type[Callable]]:
-        r"""Register a collate_fn to registry with key 'name'
-
-        Args:
-            name: Key with which the collate_fn will be registered.
-
-        Usage::
-            from tape_pytorch.registry import registry
-            from tape_pytorch.datasets import PaddedBatch
-
-            @registry.register_collate_fn('pfam')
-            class PfamBatch(PaddedBatch):
-                ...
-        """
-
-        def wrap(fn_cls: Type[Callable]) -> Type[Callable]:
-            from tape_pytorch.datasets import PaddedBatch
-            assert issubclass(fn_cls, PaddedBatch), \
-                "All collate_fn must inherit tape_pytorch.datasets.PaddedBatch"
-            cls.collate_fn_name_mapping[name] = fn_cls
-            return fn_cls
-
-        return wrap
+        if task_name not in cls.task_name_mapping:
+            raise KeyError(
+                f"Tried to register a task model for an unregistered task. "
+                f"Make sure to register the task {task_name} first.")
+        return cls.task_name_mapping[task_name].register_model(model_name, model_cls)
 
     @classmethod
     def register_callback(cls, name: str) -> Callable[[Callable], Callable]:
@@ -185,20 +165,8 @@ class Registry:
         return wrap
 
     @classmethod
-    def get_dataset_class(cls, name: str) -> Type[Dataset]:
-        return cls.dataset_name_mapping[name]
-
-    @classmethod
-    def get_model_class(cls, name: str) -> Type:
-        return cls.model_name_mapping[name]
-
-    @classmethod
-    def get_task_model_class(cls, name: str) -> Type:
-        return cls.task_model_name_mapping[name]
-
-    @classmethod
-    def get_collate_fn_class(cls, name: str) -> Type[Callable]:
-        return cls.collate_fn_name_mapping[name]
+    def get_task_spec(cls, name: str) -> TAPETaskSpec:
+        return cls.task_name_mapping[name]
 
     @classmethod
     def get_callback(cls, name: str) -> Callable:

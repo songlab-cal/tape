@@ -3,10 +3,31 @@ from typing import Optional
 from pathlib import Path
 
 import protein_models
+from tape_pytorch.registry import registry
 
 
 PathType = Union[str, Path]
 
+registry.register_task_model('mlm', 'transformer',
+                             protein_models.ProteinBertForMaskedLM)
+registry.register_task_model('transformer', 'secondary_structure',
+                             protein_models.ProteinBertForSequenceToSequenceClassification)
+registry.register_task_model('transformer', 'remote_homology',
+                             protein_models.ProteinBertForSequenceClassification)
+registry.register_task_model('transformer', 'fluorescence',
+                             protein_models.ProteinBertForValuePrediction)
+registry.register_task_model('transformer', 'stability',
+                             protein_models.ProteinBertForValuePrediction)
+registry.register_task_model('resnet', 'mlm',
+                             protein_models.ProteinResNetForMaskedLM)
+registry.register_task_model('resnet', 'secondary_structure',
+                             protein_models.ProteinResNetForSequenceToSequenceClassification)
+registry.register_task_model('resnet', 'remote_homology',
+                             protein_models.ProteinResNetForSequenceClassification)
+registry.register_task_model('resnet', 'fluorescence',
+                             protein_models.ProteinResNetForValuePrediction)
+registry.register_task_model('resnet', 'stability',
+                             protein_models.ProteinResNetForValuePrediction)
 TASK_MODEL_MAPPING = {
     ('transformer', 'mlm'):
         protein_models.ProteinBertForMaskedLM,
@@ -64,18 +85,18 @@ def get(base_model: str,
     Returns:
         model (ProteinModel): A TAPE task model
     """
-    model_cls = _get_task_model(base_model, task)
-    num_labels = TASK_LABEL_SIZE_MAPPING.get(task, -1)
+    task_spec = registry.get_task_spec(task)
+    model_cls = task_spec.get_model(base_model)
 
     if load_dir is not None:
-        model = model_cls.from_pretrained(load_dir, num_labels=num_labels)
+        model = model_cls.from_pretrained(load_dir, num_labels=task_spec.num_labels)
     else:
         config_class = model_cls.config_class
         if config_file is not None:
             config = config_class.from_json_file(config_file)
         else:
             config = config_class()
-        config.num_labels = num_labels
+        config.num_labels = task_spec.num_labels
         model = model_cls(config)
     model = model.cuda()
     return model

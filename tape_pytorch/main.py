@@ -68,7 +68,7 @@ def create_base_parser() -> argparse.ArgumentParser:
 def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Run Training on the TAPE datasets',
                                      parents=[base_parser])
-    parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
+    parser.add_argument('task', choices=list(registry.task_name_mapping.keys()),
                         help='TAPE Task to train/eval on')
     parser.add_argument('--learning_rate', default=1e-4, type=float,
                         help='Learning rate')
@@ -109,7 +109,7 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
 def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Run Eval on the TAPE Datasets',
                                      parents=[base_parser])
-    parser.add_argument('task', choices=list(registry.dataset_name_mapping.keys()),
+    parser.add_argument('task', choices=list(registry.task_name_mapping.keys()),
                         help='TAPE Task to train/eval on')
     parser.add_argument('from_pretrained', type=utils.check_is_dir,
                         help='Directory containing config and pretrained model weights')

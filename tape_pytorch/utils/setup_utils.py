@@ -92,10 +92,8 @@ def setup_dataset(task: str,
                   data_dir: typing.Union[str, Path],
                   split: str,
                   tokenizer: str) -> TAPEDataset:
-    dataset_class: typing.Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
-        task)
-    dataset = dataset_class(data_dir, split, tokenizer)
-    return dataset
+    task_spec = registry.get_task_spec(task)
+    return task_spec.dataset(data_dir, split, tokenizer)  # type: ignore
 
 
 def setup_loader(task: str,
@@ -105,7 +103,7 @@ def setup_loader(task: str,
                  n_gpu: int,
                  gradient_accumulation_steps: int,
                  num_workers: int) -> DataLoader:
-    collate_fn_cls = registry.get_collate_fn_class(task)
+    task_spec = registry.get_task_spec(task)
     sampler = DistributedSampler(dataset) if local_rank != -1 else RandomSampler(dataset)
     batch_size = get_effective_batch_size(
         batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu
@@ -116,7 +114,7 @@ def setup_loader(task: str,
     loader = DataLoader(
         dataset,
         num_workers=num_workers,
-        collate_fn=collate_fn_cls(),
+        collate_fn=task_spec.collate_fn(),
         batch_sampler=batch_sampler)
 
     return loader
