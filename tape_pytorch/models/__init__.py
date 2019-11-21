@@ -28,49 +28,11 @@ registry.register_task_model('fluorescence', 'resnet',
                              protein_models.ProteinResNetForValuePrediction)
 registry.register_task_model('stability', 'resnet',
                              protein_models.ProteinResNetForValuePrediction)
-TASK_MODEL_MAPPING = {
-    ('transformer', 'mlm'):
-        protein_models.ProteinBertForMaskedLM,
-    ('transformer', 'secondary_structure'):
-        protein_models.ProteinBertForSequenceToSequenceClassification,
-    ('transformer', 'remote_homology'):
-        protein_models.ProteinBertForSequenceClassification,
-    ('transformer', 'fluorescence'):
-        protein_models.ProteinBertForValuePrediction,
-    ('transformer', 'stability'):
-        protein_models.ProteinBertForValuePrediction,
-    ('resnet', 'mlm'):
-        protein_models.ProteinResNetForMaskedLM,
-    ('resnet', 'secondary_structure'):
-        protein_models.ProteinResNetForSequenceToSequenceClassification,
-    ('resnet', 'remote_homology'):
-        protein_models.ProteinResNetForSequenceClassification,
-    ('resnet', 'fluorescence'):
-        protein_models.ProteinResNetForValuePrediction,
-    ('resnet', 'stability'):
-        protein_models.ProteinResNetForValuePrediction
-}
-
-
-TASK_LABEL_SIZE_MAPPING = {
-    'secondary_structure': 3,
-    'remote_homology': 1195}
-
-
-KNOWN_MODELS = set(pair[0] for pair in TASK_MODEL_MAPPING)
-KNOWN_TASKS = set(pair[1] for pair in TASK_MODEL_MAPPING)
-
-
-def _get_task_model(base_model: str, task: str) -> protein_models.ProteinModel:
-    try:
-        return TASK_MODEL_MAPPING[(base_model, task)]
-    except KeyError:
-        raise KeyError(f"No model found for task {task} with base model type {base_model}")
 
 
 def get(base_model: str,
         task: str,
-        config_file: Optional[Union[str, Path]] = None,
+        config_file: Optional[PathType] = None,
         load_dir: Optional[PathType] = None) -> protein_models.ProteinModel:
     """ Create a TAPE task model, either from scratch or from a pretrained model.
         This is mostly a helper function that evaluates the if statements in a
