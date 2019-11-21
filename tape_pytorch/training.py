@@ -1,11 +1,11 @@
 import typing
-import os
 import logging
 from timeit import default_timer as timer
 import itertools
 from collections import ChainMap
 import json
 from pathlib import Path
+import inspect
 
 from tqdm import tqdm
 import torch
@@ -14,6 +14,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
+from protein_models import ProteinModel
 import tape_pytorch.utils as utils
 import tape_pytorch.errors as errors
 import tape_pytorch.models as models
@@ -42,7 +43,7 @@ ForwardModelOutput = typing.Union[typing.Tuple[torch.Tensor, OutputDict],
 class ForwardRunner:
 
     def __init__(self,
-                 model: models.TAPEPreTrainedModel,
+                 model: ProteinModel,
                  device: torch.device = torch.device('cuda:0'),
                  n_gpu: int = 1):
 
@@ -50,20 +51,33 @@ class ForwardRunner:
         self.device = device
         self.n_gpu = n_gpu
         model = getattr(model, 'module', model)
-        self._loss_key = model.loss_key
-        self._metrics_key = model.metrics_key
+        forward_arg_keys = inspect.getfullargspec(model.forward).args
+        forward_arg_keys = forward_arg_keys[1:]  # remove self argument
+        self._forward_arg_keys = forward_arg_keys
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
                 return_outputs: bool = False) -> ForwardModelOutput:
+        # Filter out batch items that aren't used in this model
+        # Requires that dataset keys match the forward args of the model
+        # Useful if some elements of the data are only used by certain models
+        # e.g. PSSMs / MSAs and other evolutionary data
+        batch = {name: tensor for name, tensor in batch.items()
+                 if name in self._forward_arg_keys}
         if self.device.type == 'cuda':
             batch = {name: tensor.cuda(device=self.device, non_blocking=True)
                      for name, tensor in batch.items()}
-        outputs = self.model(**batch)
-        loss = outputs[self.loss_key]
-        metrics = outputs[self.metrics_key]
 
-        if self.n_gpu > 1:
+        outputs = self.model(**batch)
+        if isinstance(outputs[0], tuple):
+            # model also returned metrics
+            loss, metrics = outputs[0]
+        else:
+            # no metrics
+            loss = outputs[0]
+            metrics = {}
+
+        if self.n_gpu > 1:  # pytorch DataDistributed doesn't mean scalars
             loss = loss.mean()
             metrics = {name: metric.mean() for name, metric in metrics.items()}
 
@@ -72,19 +86,19 @@ class ForwardRunner:
         else:
             return loss, metrics
 
-    @property
-    def loss_key(self) -> str:
-        return self._loss_key
+    def train(self):
+        self.model.train()
+        return self
 
-    @property
-    def metrics_key(self) -> str:
-        return self._metrics_key
+    def eval(self):
+        self.model.eval()
+        return self
 
 
 class BackwardRunner(ForwardRunner):
 
     def __init__(self,
-                 model: models.TAPEPreTrainedModel,
+                 model: ProteinModel,
                  optimizer: optim.Optimizer,  # type: ignore
                  scheduler: typing.Optional[optim.lr_scheduler.LambdaLR] = None,
                  gradient_accumulation_steps: int = 1,
@@ -194,37 +208,39 @@ def run_train_epoch(epoch_id: int,
     accumulator = utils.MetricsAccumulator(smoothing)
 
     torch.set_grad_enabled(True)
-    runner.model.train()
+    runner.train()
+
+    def make_log_str(step: int, time: float) -> str:
+        ep_percent = epoch_id + step / len(train_loader)
+        if runner.scheduler is not None:
+            curr_lr = runner.scheduler.get_lr()[0]  # type: ignore
+        else:
+            curr_lr = runner.optimizer.param_groups[0]['lr']
+
+        print_str = []
+        print_str.append(f"[Ep: {ep_percent:.2f}]")
+        print_str.append(f"[Iter: {runner.global_step}]")
+        print_str.append(f"[Time: {time:5.2f}s]")
+        print_str.append(f"[Loss: {accumulator.loss():.5g}]")
+
+        for name, value in accumulator.metrics().items():
+            print_str.append(f"[{name.capitalize()}: {value:.5g}]")
+
+        print_str.append(f"[LR: {curr_lr:.5g}]")
+        return ''.join(print_str)
 
     start_t = timer()
     for step, batch in enumerate(train_loader):
         loss, metrics = runner.forward(batch)  # type: ignore
         runner.backward(loss)
-        accumulator.update(
-            loss.item(), {name: value.item() for name, value in metrics.items()}, step=False)
+        accumulator.update(loss, metrics, step=False)
         if (step + 1) % gradient_accumulation_steps == 0:
             runner.step()
-            loss_tmp, metrics_tmp = accumulator.step()
-            metrics_tmp['loss'] = loss_tmp
-            viz.log_metrics(metrics_tmp, "train", runner.global_step)
+            viz.log_metrics(accumulator.step(), "train", runner.global_step)
             if runner.global_step % num_log_iter == 0:
                 end_t = timer()
-                ep = epoch_id + step / float(len(train_loader))
-                print_str = [
-                    f"[Ep: {ep:.2f}]",
-                    f"[Iter: {runner.global_step}]",
-                    f"[Time: {end_t - start_t:5.2f}s]",
-                    f"[Loss: {accumulator.loss():.5g}]"]
-                print_str += [f"[{name.capitalize()}: {value:.5g}]"
-                              for name, value in accumulator.metrics().items()]
-                if runner.scheduler is not None:
-                    curr_lr = runner.scheduler.get_lr()[0]  # type: ignore
-                else:
-                    curr_lr = runner.optimizer.param_groups[0]['lr']
-                print_str += [f"[LR: {curr_lr:.5g}]"]
+                logger.info(make_log_str(step, end_t - start_t))
                 start_t = end_t
-
-                logger.info(''.join(print_str))
 
     final_print_str = f"Train: [Loss: {accumulator.final_loss():.5g}]"
     for name, value in accumulator.final_metrics().items():
@@ -321,7 +337,7 @@ def run_train(model_type: str,
               exp_name: typing.Optional[str] = None,
               from_pretrained: typing.Optional[str] = None,
               log_dir: str = './logs',
-              no_eval: bool = False,
+              eval_freq: int = 1,
               save_freq: typing.Union[int, str] = 1,
               model_config_file: typing.Optional[str] = None,
               data_dir: str = './data',
@@ -336,6 +352,8 @@ def run_train(model_type: str,
               log_level: typing.Union[str, int] = logging.INFO,
               patience: int = -1,
               resume_from_checkpoint: bool = False) -> None:
+
+    # SETUP AND LOGGING CODE #
     input_args = locals()
     device, n_gpu, is_master = utils.setup_distributed(
         local_rank, no_cuda)
@@ -365,11 +383,11 @@ def run_train(model_type: str,
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)
 
-    model = utils.setup_model(
-        task, from_pretrained, model_config_file, model_type)
+    model = models.get(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
-    viz = visualization.get(log_dir, exp_name, local_rank)
+    viz = visualization.get(log_dir, exp_name, local_rank, debug=debug)
     viz.log_config(input_args)
+    viz.log_config(model.config.to_dict())
     viz.watch(model)
 
     logger.info(
@@ -388,18 +406,8 @@ def run_train(model_type: str,
 
     if resume_from_checkpoint:
         assert from_pretrained is not None
-        checkpoint = torch.load(
-            os.path.join(from_pretrained, 'checkpoint.bin'), map_location=device)
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        if fp16:
-            optimizer._lazy_init_maybe_master_weights()
-            optimizer._amp_stash.lazy_init_called = True
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            for param, saved in zip(amp.master_params(optimizer), checkpoint['master params']):
-                param.data.copy_(saved.data)
-            amp.load_state_dict(checkpoint['amp'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        start_epoch = checkpoint['epoch'] + 1
+        start_epoch = utils.resume_from_checkpoint(
+            from_pretrained, optimizer, scheduler, device, fp16)
         num_train_epochs -= start_epoch
     else:
         start_epoch = 0
@@ -426,8 +434,8 @@ def run_train(model_type: str,
             f"Only recongized string value for save_freq is 'improvement'"
             f", received: {save_freq}")
 
-    if save_freq == 'improvement' and no_eval:
-        raise ValueError("Cannot set save_freq to 'improvement' and no_eval")
+    if save_freq == 'improvement' and eval_freq <= 0:
+        raise ValueError("Cannot set save_freq to 'improvement' and eval_freq < 0")
 
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
@@ -436,30 +444,33 @@ def run_train(model_type: str,
     logger.info("  Num train steps = %d", num_train_optimization_steps)
 
     best_val_loss = float('inf')
-    num_epochs_no_improvement = 0
+    num_evals_no_improvement = 0
 
-    def do_save(epoch_id: int, num_epochs_no_improvement: int) -> bool:
+    def do_save(epoch_id: int, num_evals_no_improvement: int) -> bool:
         if not is_master:
             return False
         if isinstance(save_freq, int):
             return ((epoch_id + 1) % save_freq == 0) or ((epoch_id + 1) == num_train_epochs)
         else:
-            return num_epochs_no_improvement == 0
+            return num_evals_no_improvement == 0
+
     utils.barrier_if_distributed()
+
+    # ACTUAL TRAIN/EVAL LOOP #
     with utils.wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation_steps):
         for epoch_id in range(start_epoch, num_train_epochs):
             run_train_epoch(epoch_id, train_loader, runner,
                             viz, num_log_iter, gradient_accumulation_steps)
-            if not no_eval:
+            if eval_freq > 0 and epoch_id % eval_freq == 0:
                 val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    num_epochs_no_improvement = 0
+                    num_evals_no_improvement = 0
                 else:
-                    num_epochs_no_improvement += 1
+                    num_evals_no_improvement += 1
 
             # Save trained model
-            if do_save(epoch_id, num_epochs_no_improvement):
+            if do_save(epoch_id, num_evals_no_improvement):
                 logger.info("** ** * Saving trained model ** ** * ")
                 # Only save the model itself
                 output_model_dir = save_path / f"pytorch_model_{epoch_id}"
@@ -468,9 +479,9 @@ def run_train(model_type: str,
                 logger.info(f"Saving model checkpoint to {output_model_dir}")
 
             utils.barrier_if_distributed()
-            if patience > 0 and num_epochs_no_improvement >= patience:
+            if patience > 0 and num_evals_no_improvement >= patience:
                 logger.info(f"Finished training at epoch {epoch_id} because no "
-                            f"improvement for {num_epochs_no_improvement} epochs.")
+                            f"improvement for {num_evals_no_improvement} epochs.")
                 logger.log(35, f"Best Val Loss: {best_val_loss}")
                 if local_rank != -1:
                     # If you're distributed, raise this error. It sends a signal to
@@ -481,5 +492,5 @@ def run_train(model_type: str,
                 else:
                     break
     logger.info(f"Finished training after {num_train_epochs} epochs.")
-    if not no_eval:
+    if best_val_loss != float('inf'):
         logger.log(35, f"Best Val Loss: {best_val_loss}")

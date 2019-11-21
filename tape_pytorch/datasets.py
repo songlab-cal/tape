@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
 import tape_pytorch.tokenizers as tokenizers
-from tape_pytorch.registry import registry
+from .registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +127,7 @@ class LMDBDataset(Dataset):
 class PaddedBatch(ABC):
 
     @abstractmethod
-    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Tuple[np.ndarray]:
+    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Dict[str, np.ndarray]:
         return NotImplemented
 
     def _pad(self, sequences: Sequence[np.ndarray], constant_value=0) -> torch.Tensor:
@@ -142,7 +142,6 @@ class PaddedBatch(ABC):
         return torch.from_numpy(array)
 
 
-@registry.register_dataset('embed')
 class TAPEDataset(Dataset):
 
     def __init__(self,
@@ -156,8 +155,7 @@ class TAPEDataset(Dataset):
 
         if isinstance(tokenizer, str):
             model_file = data_path / 'pfam.model'
-            tokenizer = registry.get_tokenizer_class(tokenizer).from_pretrained(
-                model_file=model_file)
+            tokenizer = tokenizers.get(tokenizer).from_pretrained(model_file=model_file)
 
         assert isinstance(tokenizer, tokenizers.TAPETokenizer)
         self.tokenizer = tokenizer
@@ -186,24 +184,22 @@ class TAPEDataset(Dataset):
         if self._convert_tokens_to_ids:
             tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
 
-        attention_mask = np.ones([len(tokens)], dtype=np.int64)
+        input_mask = np.ones([len(tokens)], dtype=np.int64)
 
-        return item, tokens, attention_mask
+        return item, tokens, input_mask
 
 
-@registry.register_collate_fn('embed')
 class EmbedBatch(PaddedBatch):
 
     def __call__(self, batch):
         _, input_ids, input_mask = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
 
         return {'input_ids': input_ids,
-                'attention_mask': input_mask}
+                'input_mask': input_mask}
 
 
-@registry.register_dataset('pfam')
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
@@ -231,14 +227,14 @@ class PfamDataset(TAPEDataset):
             data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
 
     def __getitem__(self, index):
-        item, tokens, attention_mask = super().__getitem__(index)
+        item, tokens, input_mask = super().__getitem__(index)
 
         masked_tokens, labels = self._apply_bert_mask(tokens)
 
         masked_token_ids = np.array(
             self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
 
-        return masked_token_ids, attention_mask, labels, item['clan'], item['family']
+        return masked_token_ids, input_mask, labels, item['clan'], item['family']
 
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
         masked_tokens = copy(tokens)
@@ -270,26 +266,24 @@ class PfamDataset(TAPEDataset):
         return masked_tokens, labels
 
 
-@registry.register_collate_fn('pfam')
 class PfamBatch(PaddedBatch):
 
     def __call__(self, batch):
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
         input_ids = self._pad(input_ids, 0)  # pad index is zeros
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros as well
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros as well
         lm_label_ids = self._pad(lm_label_ids, -1)  # ignore_index is -1
         clan = torch.LongTensor(clan)
         family = torch.LongTensor(family)
 
         return {'input_ids': input_ids,
-                'attention_mask': input_mask,
-                'masked_lm_labels': lm_label_ids,
-                'clan_labels': clan,
-                'family_labels': family}
+                'input_mask': input_mask,
+                'masked_lm_labels': lm_label_ids}
+                # 'clan_labels': clan,
+                # 'family_labels': family}
 
 
-@registry.register_dataset('fluorescence')
 class FluorescenceDataset(TAPEDataset):
 
     def __init__(self,
@@ -308,25 +302,23 @@ class FluorescenceDataset(TAPEDataset):
         super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
-        item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, float(item['log_fluorescence'][0])
+        item, token_ids, input_mask = super().__getitem__(index)
+        return token_ids, input_mask, float(item['log_fluorescence'][0])
 
 
-@registry.register_collate_fn('fluorescence')
 class FluorescenceBatch(PaddedBatch):
 
     def __call__(self, batch):
-        input_ids, input_mask, fluorescence_target = tuple(zip(*batch))
+        input_ids, input_mask, fluorescence_true_value = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
-        fluorescence_target = torch.FloatTensor(fluorescence_target)
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
+        fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)
 
         return {'input_ids': input_ids,
-                'attention_mask': input_mask,
-                'target': fluorescence_target}
+                'input_mask': input_mask,
+                'true_value': fluorescence_true_value}
 
 
-@registry.register_dataset('stability')
 class StabilityDataset(TAPEDataset):
 
     def __init__(self,
@@ -345,25 +337,23 @@ class StabilityDataset(TAPEDataset):
         super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
-        item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, float(item['stability_score'][0])
+        item, token_ids, input_mask = super().__getitem__(index)
+        return token_ids, input_mask, float(item['stability_score'][0])
 
 
-@registry.register_collate_fn('stability')
 class StabilityBatch(PaddedBatch):
 
     def __call__(self, batch):
         input_ids, input_mask, stability_score = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
         stability_score = torch.FloatTensor(stability_score)
 
         return {'input_ids': input_ids,
-                'attention_mask': input_mask,
-                'target': stability_score}
+                'input_mask': input_mask,
+                'true_value': stability_score}
 
 
-@registry.register_dataset('remote_homology')
 class RemoteHomologyDataset(TAPEDataset):
 
     def __init__(self,
@@ -384,25 +374,23 @@ class RemoteHomologyDataset(TAPEDataset):
         super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
-        item, token_ids, attention_mask = super().__getitem__(index)
-        return token_ids, attention_mask, item['fold_label']
+        item, token_ids, input_mask = super().__getitem__(index)
+        return token_ids, input_mask, item['fold_label']
 
 
-@registry.register_collate_fn('remote_homology')
 class RemoteHomologyBatch(PaddedBatch):
 
     def __call__(self, batch):
         input_ids, input_mask, fold_label = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
         fold_label = torch.LongTensor(fold_label)
 
         return {'input_ids': input_ids,
-                'attention_mask': input_mask,
-                'label': fold_label}
+                'input_mask': input_mask,
+                'sequence_label': fold_label}
 
 
-@registry.register_dataset('contact_prediction')
 class ProteinnetDataset(TAPEDataset):
 
     def __init__(self,
@@ -422,7 +410,7 @@ class ProteinnetDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         index = index % super().__len__()
-        item, token_ids, attention_mask = super().__getitem__(index)
+        item, token_ids, input_mask = super().__getitem__(index)
 
         valid_mask = item['valid_mask']
         contact_map = np.less(squareform(pdist(item['tertiary'])), 8.0).astype(np.int64)
@@ -432,29 +420,27 @@ class ProteinnetDataset(TAPEDataset):
         invalid_mask |= np.abs(yind - xind) < 6
         contact_map[invalid_mask] = -1
 
-        return token_ids, attention_mask, contact_map
+        return token_ids, input_mask, contact_map
 
     def __len__(self) -> int:
         return 1000000 if 'train' in self._mode else super().__len__()
 
 
-@registry.register_collate_fn('contact_prediction')
 class ProteinnetBatch(PaddedBatch):
 
     def __call__(self, batch):
         input_ids, input_mask, contact_labels = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
         contact_labels = self._pad(contact_labels, -1)
 
         batch = {'input_ids': input_ids,
-                 'attention_mask': input_mask,
+                 'input_mask': input_mask,
                  'contact_labels': contact_labels}
 
         return batch
 
 
-@registry.register_dataset('secondary_structure')
 class SecondaryStructureDataset(TAPEDataset):
 
     def __init__(self,
@@ -477,7 +463,7 @@ class SecondaryStructureDataset(TAPEDataset):
         self._num_classes = num_classes
 
     def __getitem__(self, index: int):
-        item, tokens, attention_mask = super().__getitem__(index)
+        item, tokens, input_mask = super().__getitem__(index)
 
         # pad with -1s because of cls/sep tokens
         labels = np.asarray(item[f'ss{self._num_classes}'], np.int64)
@@ -492,24 +478,33 @@ class SecondaryStructureDataset(TAPEDataset):
             token_lengths = None
 
         token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens))  # type: ignore
-        return token_ids, attention_mask, labels, token_lengths
+        return token_ids, input_mask, labels, token_lengths
 
 
-@registry.register_collate_fn('secondary_structure')
 class SecondaryStructureBatch(PaddedBatch):
 
     def __call__(self, batch):
         input_ids, input_mask, ss_label, token_lengths = tuple(zip(*batch))
         input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad attention_mask with zeros
+        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
         ss_label = self._pad(ss_label, -1)
 
         batch = {'input_ids': input_ids,
-                 'attention_mask': input_mask,
-                 'sequence_labels': ss_label}
+                 'input_mask': input_mask,
+                 'amino_acid_labels': ss_label}
 
         if not any(tk is None for tk in token_lengths):
             token_lengths = self._pad(token_lengths, 1)
             batch['token_lengths'] = token_lengths
 
         return batch
+
+
+registry.register_task('embed', TAPEDataset, EmbedBatch)
+registry.register_task('mlm', PfamDataset, PfamBatch)
+registry.register_task('fluorescence', FluorescenceDataset, FluorescenceBatch)
+registry.register_task('stability', StabilityDataset, StabilityBatch)
+registry.register_task('remote_homology', RemoteHomologyDataset, RemoteHomologyBatch, 1195)
+registry.register_task('contact_prediction', ProteinnetDataset, ProteinnetBatch)
+registry.register_task(
+    'secondary_structure', SecondaryStructureDataset, SecondaryStructureBatch, 3)

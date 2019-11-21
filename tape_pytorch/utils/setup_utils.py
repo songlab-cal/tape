@@ -12,7 +12,6 @@ from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers import AdamW
 from pytorch_transformers.modeling_utils import PreTrainedModel
 
-import tape_pytorch.models as models
 from tape_pytorch.registry import registry
 from tape_pytorch.datasets import TAPEDataset
 
@@ -55,37 +54,6 @@ def setup_logging(local_rank: int,
             root_logger.addHandler(file_handler)
 
 
-def setup_model(task: str,
-                from_pretrained: typing.Optional[str] = None,
-                model_config_file: typing.Optional[str] = None,
-                model_type: typing.Optional[str] = None) -> models.TAPEPreTrainedModel:
-    """Create a TAPE task model, either from scratch or from a pretrained model. This is mostly
-    a helper function that evaluates the if statements in a sensible order if you pass all three
-    of the arguments.
-
-    Args:
-        task (str): The TAPE task for which to create a model
-        from_pretrained (str, optional): A save directory for a pretrained model
-        model_config_file (str, optional): A json config file that specifies hyperparameters
-        model_type (str, optional): The bare minimum requirement - specify just the base model
-            type (e.g. transformer, resnet). Uses default hyperparameters.
-
-    Returns:
-        model (TAPEPreTrainedModel): A TAPE task model
-    """
-    if from_pretrained is not None:
-        model = models.from_pretrained(task, from_pretrained)
-    elif model_config_file is not None:
-        model = models.from_config(task, model_config_file)
-    elif model_type is not None:
-        model = models.from_model_type(task, model_type)
-    else:
-        raise ValueError(
-            "Must specify one of <from_pretrained, model_config_file, or model_type>")
-    model.cuda()
-    return model
-
-
 def setup_optimizer(model: PreTrainedModel,
                     learning_rate: float):
     """Create the AdamW optimizer for the given model with the specified learning rate. Based on
@@ -124,10 +92,8 @@ def setup_dataset(task: str,
                   data_dir: typing.Union[str, Path],
                   split: str,
                   tokenizer: str) -> TAPEDataset:
-    dataset_class: typing.Type[TAPEDataset] = registry.get_dataset_class(  # type: ignore
-        task)
-    dataset = dataset_class(data_dir, split, tokenizer)
-    return dataset
+    task_spec = registry.get_task_spec(task)
+    return task_spec.dataset(data_dir, split, tokenizer)  # type: ignore
 
 
 def setup_loader(task: str,
@@ -137,26 +103,19 @@ def setup_loader(task: str,
                  n_gpu: int,
                  gradient_accumulation_steps: int,
                  num_workers: int) -> DataLoader:
-    collate_fn_cls = registry.get_collate_fn_class(task)
-    sampler_type = (DistributedSampler if local_rank != -1 else RandomSampler)
+    task_spec = registry.get_task_spec(task)
+    sampler = DistributedSampler(dataset) if local_rank != -1 else RandomSampler(dataset)
     batch_size = get_effective_batch_size(
         batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu
     # WARNING: this will fail if the primary sequence is not the first thing the dataset returns
     batch_sampler = BucketBatchSampler(
-        sampler_type(dataset), batch_size, False, lambda x: len(x[0]), dataset)
+        sampler, batch_size, False, lambda x: len(x[0]), dataset)
 
-    loader = DataLoader(  # type: ignore
+    loader = DataLoader(
         dataset,
         num_workers=num_workers,
-        collate_fn=collate_fn_cls(),
+        collate_fn=task_spec.collate_fn(),
         batch_sampler=batch_sampler)
-
-    # loader = DataLoader(  # type: ignore
-        # dataset,
-        # batch_size=batch_size,
-        # num_workers=num_workers,
-        # collate_fn=collate_fn_cls(),
-        # sampler=sampler_type(dataset))
 
     return loader
 

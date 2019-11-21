@@ -23,6 +23,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+FloatOrTensor = typing.Union[float, torch.Tensor]
 
 
 def int_or_str(arg: str) -> typing.Union[int, str]:
@@ -105,6 +106,27 @@ def get_num_train_optimization_steps(dataset: Dataset,
     return int(len(dataset) / batch_size * num_train_epochs)
 
 
+def resume_from_checkpoint(from_pretrained: str,
+                           optimizer: torch.optim.Optimizer,  # type: ignore
+                           scheduler: torch.optim.lr_scheduler.LambdaLR,
+                           device: torch.device,
+                           fp16: bool) -> int:
+    checkpoint = torch.load(
+        os.path.join(from_pretrained, 'checkpoint.bin'), map_location=device)
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    if fp16:
+        assert APEX_FOUND
+        optimizer._lazy_init_maybe_master_weights()
+        optimizer._amp_stash.lazy_init_called = True
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        for param, saved in zip(amp.master_params(optimizer), checkpoint['master params']):
+            param.data.copy_(saved.data)
+        amp.load_state_dict(checkpoint['amp'])
+    scheduler.load_state_dict(checkpoint['scheduler'])
+    start_epoch = checkpoint['epoch'] + 1
+    return start_epoch
+
+
 class MetricsAccumulator:
 
     def __init__(self, smoothing: float = 0.95):
@@ -119,16 +141,24 @@ class MetricsAccumulator:
         self._nupdates = 0
         self._smoothing = smoothing
 
-    def update(self, loss: float, metrics: typing.Dict[str, float], step: bool = True) -> None:
+    def update(self,
+               loss: FloatOrTensor,
+               metrics: typing.Dict[str, FloatOrTensor],
+               step: bool = True) -> None:
+        if isinstance(loss, torch.Tensor):
+            loss = loss.item()
+
         self._loss_tmp += loss
         for name, value in metrics.items():
+            if isinstance(value, torch.Tensor):
+                value = value.item()
             self._metricstmp[name] += value
         self._nacc_steps += 1
 
         if step:
             self.step()
 
-    def step(self) -> typing.Tuple[float, typing.Dict[str, float]]:
+    def step(self) -> typing.Dict[str, float]:
         loss_tmp = self._loss_tmp / self._nacc_steps
         metricstmp = {name: value / self._nacc_steps
                       for name, value in self._metricstmp.items()}
@@ -156,7 +186,8 @@ class MetricsAccumulator:
         self._loss_tmp = 0
         self._metricstmp = defaultdict(lambda: 0.0)
 
-        return loss_tmp, metricstmp
+        metricstmp['loss'] = loss_tmp
+        return metricstmp
 
     def loss(self) -> float:
         if self._smoothloss is None:

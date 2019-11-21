@@ -1,4 +1,4 @@
-from typing import Union, List, Optional
+from typing import Union, List, Optional, Type
 from pathlib import Path
 from abc import ABC, abstractmethod, abstractproperty
 import logging
@@ -247,3 +247,12 @@ class BPETokenizer(TAPETokenizer):
         if model_file is None:
             raise ValueError("Must specify pretrained model file")
         return cls(model_file=model_file, **kwargs)
+
+
+def get(name: str) -> Type[TAPETokenizer]:
+    if name == 'amino_acid':
+        return AminoAcidTokenizer
+    elif name == 'bpe':
+        return BPETokenizer
+    else:
+        raise KeyError(f"Unrecognized tokenizer type {name}")

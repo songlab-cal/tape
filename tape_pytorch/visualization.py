@@ -1,4 +1,5 @@
 import typing
+import os
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
@@ -19,7 +20,7 @@ class TAPEVisualizer(ABC):
     """Base class for visualization in TAPE"""
 
     @abstractmethod
-    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str):
+    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str, debug: bool = False):
         raise NotImplementedError
 
     @abstractmethod
@@ -41,7 +42,10 @@ class TAPEVisualizer(ABC):
 class DummyVisualizer(TAPEVisualizer):
     """Dummy class that doesn't do anything. Used for non-master branches."""
 
-    def __init__(self, log_dir: typing.Union[str, Path] = '', exp_name: str = ''):
+    def __init__(self,
+                 log_dir: typing.Union[str, Path] = '',
+                 exp_name: str = '',
+                 debug: bool = False):
         pass
 
     def log_config(self, config: typing.Dict[str, typing.Any]) -> None:
@@ -59,7 +63,7 @@ class DummyVisualizer(TAPEVisualizer):
 
 class TBVisualizer(TAPEVisualizer):
 
-    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str):
+    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str, debug: bool = False):
         log_dir = Path(log_dir) / exp_name
         logger.info(f"tensorboard file at: {log_dir}")
         self.logger = SummaryWriter(log_dir=str(log_dir))
@@ -82,10 +86,16 @@ class TBVisualizer(TAPEVisualizer):
 
 class WandBVisualizer(TAPEVisualizer):
 
-    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str):
+    def __init__(self, log_dir: typing.Union[str, Path], exp_name: str, debug: bool = False):
         if not WANDB_FOUND:
             raise ImportError("wandb module not available")
-        wandb.init(project="tape", dir=log_dir, name=exp_name)
+        if debug:
+            os.environ['WANDB_MODE'] = 'dryrun'
+        if 'WANDB_PROJECT' not in os.environ:
+            # Want the user to set the WANDB_PROJECT.
+            logger.warning("WANDB_PROJECT environment variable not found, "
+                           "not logging to app.wandb.ai")
+        wandb.init(dir=log_dir, name=exp_name)
 
     def log_config(self, config: typing.Dict[str, typing.Any]) -> None:
         wandb.config.update(config)
@@ -101,10 +111,13 @@ class WandBVisualizer(TAPEVisualizer):
                    for name, value in metrics_dict.items()}, step=step)
 
 
-def get(log_dir: typing.Union[str, Path], exp_name: str, local_rank: int) -> TAPEVisualizer:
+def get(log_dir: typing.Union[str, Path],
+        exp_name: str,
+        local_rank: int,
+        debug: bool = False) -> TAPEVisualizer:
     if local_rank not in (-1, 0):
-        return DummyVisualizer(log_dir, exp_name)
+        return DummyVisualizer(log_dir, exp_name, debug)
     elif WANDB_FOUND:
-        return WandBVisualizer(log_dir, exp_name)
+        return WandBVisualizer(log_dir, exp_name, debug)
     else:
-        return TBVisualizer(log_dir, exp_name)
+        return TBVisualizer(log_dir, exp_name, debug)
