@@ -6,6 +6,7 @@ import itertools
 from collections import ChainMap
 import json
 from pathlib import Path
+import inspect
 
 from tqdm import tqdm
 import torch
@@ -51,20 +52,33 @@ class ForwardRunner:
         self.device = device
         self.n_gpu = n_gpu
         model = getattr(model, 'module', model)
+        forward_arg_keys = inspect.getfullargspec(model.forward).args
+        forward_arg_keys = forward_arg_keys[1:]  # remove self argument
+        self._forward_arg_keys = forward_arg_keys
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
                 return_outputs: bool = False) -> ForwardModelOutput:
+        # Filter out batch items that aren't used in this model
+        # Requires that dataset keys match the forward args of the model
+        # Useful if some elements of the data are only used by certain models
+        # e.g. PSSMs / MSAs and other evolutionary data
+        batch = {name: tensor for name, tensor in batch.items()
+                 if name in self._forward_arg_keys}
         if self.device.type == 'cuda':
             batch = {name: tensor.cuda(device=self.device, non_blocking=True)
                      for name, tensor in batch.items()}
-        outputs = self.model(**batch)
-        # loss = outputs[self.loss_key]
-        # metrics = outputs[self.metrics_key]
-        loss = outputs[0]
-        metrics: typing.Dict[str, torch.Tensor] = {}
 
-        if self.n_gpu > 1:
+        outputs = self.model(**batch)
+        if isinstance(outputs[0], tuple):
+            # model also returned metrics
+            loss, metrics = outputs[0]
+        else:
+            # no metrics
+            loss = outputs[0]
+            metrics = {}
+
+        if self.n_gpu > 1:  # pytorch DataDistributed doesn't mean scalars
             loss = loss.mean()
             metrics = {name: metric.mean() for name, metric in metrics.items()}
 
