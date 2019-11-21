@@ -444,15 +444,15 @@ def run_train(model_type: str,
     logger.info("  Num train steps = %d", num_train_optimization_steps)
 
     best_val_loss = float('inf')
-    num_epochs_no_improvement = 0
+    num_evals_no_improvement = 0
 
-    def do_save(epoch_id: int, num_epochs_no_improvement: int) -> bool:
+    def do_save(epoch_id: int, num_evals_no_improvement: int) -> bool:
         if not is_master:
             return False
         if isinstance(save_freq, int):
             return ((epoch_id + 1) % save_freq == 0) or ((epoch_id + 1) == num_train_epochs)
         else:
-            return num_epochs_no_improvement == 0
+            return num_evals_no_improvement == 0
 
     utils.barrier_if_distributed()
 
@@ -465,12 +465,12 @@ def run_train(model_type: str,
                 val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
-                    num_epochs_no_improvement = 0
+                    num_evals_no_improvement = 0
                 else:
-                    num_epochs_no_improvement += 1
+                    num_evals_no_improvement += 1
 
             # Save trained model
-            if do_save(epoch_id, num_epochs_no_improvement):
+            if do_save(epoch_id, num_evals_no_improvement):
                 logger.info("** ** * Saving trained model ** ** * ")
                 # Only save the model itself
                 output_model_dir = save_path / f"pytorch_model_{epoch_id}"
@@ -479,9 +479,9 @@ def run_train(model_type: str,
                 logger.info(f"Saving model checkpoint to {output_model_dir}")
 
             utils.barrier_if_distributed()
-            if patience > 0 and num_epochs_no_improvement >= patience:
+            if patience > 0 and num_evals_no_improvement >= patience:
                 logger.info(f"Finished training at epoch {epoch_id} because no "
-                            f"improvement for {num_epochs_no_improvement} epochs.")
+                            f"improvement for {num_evals_no_improvement} epochs.")
                 logger.log(35, f"Best Val Loss: {best_val_loss}")
                 if local_rank != -1:
                     # If you're distributed, raise this error. It sends a signal to
