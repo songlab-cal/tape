@@ -405,18 +405,8 @@ def run_train(model_type: str,
 
     if resume_from_checkpoint:
         assert from_pretrained is not None
-        checkpoint = torch.load(
-            os.path.join(from_pretrained, 'checkpoint.bin'), map_location=device)
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        if fp16:
-            optimizer._lazy_init_maybe_master_weights()
-            optimizer._amp_stash.lazy_init_called = True
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            for param, saved in zip(amp.master_params(optimizer), checkpoint['master params']):
-                param.data.copy_(saved.data)
-            amp.load_state_dict(checkpoint['amp'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        start_epoch = checkpoint['epoch'] + 1
+        start_epoch = utils.resume_from_checkpoint(
+            from_pretrained, optimizer, scheduler, device, fp16)
         num_train_epochs -= start_epoch
     else:
         start_epoch = 0
@@ -462,6 +452,7 @@ def run_train(model_type: str,
             return ((epoch_id + 1) % save_freq == 0) or ((epoch_id + 1) == num_train_epochs)
         else:
             return num_epochs_no_improvement == 0
+
     utils.barrier_if_distributed()
     with utils.wrap_cuda_oom_error(local_rank, batch_size, n_gpu, gradient_accumulation_steps):
         for epoch_id in range(start_epoch, num_train_epochs):

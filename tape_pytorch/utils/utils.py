@@ -106,6 +106,27 @@ def get_num_train_optimization_steps(dataset: Dataset,
     return int(len(dataset) / batch_size * num_train_epochs)
 
 
+def resume_from_checkpoint(from_pretrained: str,
+                           optimizer: torch.optim.Optimizer,  # type: ignore
+                           scheduler: torch.optim.lr_scheduler.LambdaLR,
+                           device: torch.device,
+                           fp16: bool) -> int:
+    checkpoint = torch.load(
+        os.path.join(from_pretrained, 'checkpoint.bin'), map_location=device)
+    optimizer.load_state_dict(checkpoint['optimizer'])
+    if fp16:
+        assert APEX_FOUND
+        optimizer._lazy_init_maybe_master_weights()
+        optimizer._amp_stash.lazy_init_called = True
+        optimizer.load_state_dict(checkpoint['optimizer'])
+        for param, saved in zip(amp.master_params(optimizer), checkpoint['master params']):
+            param.data.copy_(saved.data)
+        amp.load_state_dict(checkpoint['amp'])
+    scheduler.load_state_dict(checkpoint['scheduler'])
+    start_epoch = checkpoint['epoch'] + 1
+    return start_epoch
+
+
 class MetricsAccumulator:
 
     def __init__(self, smoothing: float = 0.95):
