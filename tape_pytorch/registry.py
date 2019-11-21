@@ -91,7 +91,7 @@ class Registry:
         """
         if task_name not in cls.task_name_mapping:
             raise KeyError(
-                f"Tried to register a task model for an unregistered task. "
+                f"Tried to register a task model for an unregistered task: {task_name}. "
                 f"Make sure to register the task {task_name} first.")
         return cls.task_name_mapping[task_name].register_model(model_name, model_cls)
 

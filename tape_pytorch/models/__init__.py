@@ -10,23 +10,23 @@ PathType = Union[str, Path]
 
 registry.register_task_model('mlm', 'transformer',
                              protein_models.ProteinBertForMaskedLM)
-registry.register_task_model('transformer', 'secondary_structure',
+registry.register_task_model('secondary_structure', 'transformer',
                              protein_models.ProteinBertForSequenceToSequenceClassification)
-registry.register_task_model('transformer', 'remote_homology',
+registry.register_task_model('remote_homology', 'transformer',
                              protein_models.ProteinBertForSequenceClassification)
-registry.register_task_model('transformer', 'fluorescence',
+registry.register_task_model('fluorescence', 'transformer',
                              protein_models.ProteinBertForValuePrediction)
-registry.register_task_model('transformer', 'stability',
+registry.register_task_model('stability', 'transformer',
                              protein_models.ProteinBertForValuePrediction)
-registry.register_task_model('resnet', 'mlm',
+registry.register_task_model('mlm', 'resnet',
                              protein_models.ProteinResNetForMaskedLM)
-registry.register_task_model('resnet', 'secondary_structure',
+registry.register_task_model('secondary_structure', 'resnet',
                              protein_models.ProteinResNetForSequenceToSequenceClassification)
-registry.register_task_model('resnet', 'remote_homology',
+registry.register_task_model('remote_homology', 'resnet',
                              protein_models.ProteinResNetForSequenceClassification)
-registry.register_task_model('resnet', 'fluorescence',
+registry.register_task_model('fluorescence', 'resnet',
                              protein_models.ProteinResNetForValuePrediction)
-registry.register_task_model('resnet', 'stability',
+registry.register_task_model('stability', 'resnet',
                              protein_models.ProteinResNetForValuePrediction)
 TASK_MODEL_MAPPING = {
     ('transformer', 'mlm'):
