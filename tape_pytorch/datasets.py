@@ -409,7 +409,6 @@ class ProteinnetDataset(TAPEDataset):
         super().__init__(data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
-        index = index % super().__len__()
         item, token_ids, input_mask = super().__getitem__(index)
 
         valid_mask = item['valid_mask']
@@ -421,9 +420,6 @@ class ProteinnetDataset(TAPEDataset):
         contact_map[invalid_mask] = -1
 
         return token_ids, input_mask, contact_map
-
-    def __len__(self) -> int:
-        return 1000000 if 'train' in self._mode else super().__len__()
 
 
 class ProteinnetBatch(PaddedBatch):
