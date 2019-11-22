@@ -43,7 +43,7 @@ def create_base_parser() -> argparse.ArgumentParser:
                         help='Config file for model')
     parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
                         help='Directory from which to load task data')
-    parser.add_argument('--vocab_file', default='data/pfam.model', type=utils.check_is_file,
+    parser.add_argument('--vocab_file', default=None,
                         help='Pretrained tokenizer vocab file')
     parser.add_argument('--output_dir', default='./results', type=str)
     parser.add_argument('--no_cuda', action='store_true', help='CPU-only flag')
