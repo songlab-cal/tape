@@ -11,16 +11,8 @@ from collections import defaultdict
 
 import numpy as np
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset
 import torch.distributed as dist
-
-try:
-    from apex import amp
-    APEX_FOUND = True
-except ImportError:
-    APEX_FOUND = False
-
 
 logger = logging.getLogger(__name__)
 FloatOrTensor = typing.Union[float, torch.Tensor]
@@ -104,27 +96,6 @@ def get_num_train_optimization_steps(dataset: Dataset,
                                      batch_size: int,
                                      num_train_epochs: int) -> int:
     return int(len(dataset) / batch_size * num_train_epochs)
-
-
-def resume_from_checkpoint(from_pretrained: str,
-                           optimizer: torch.optim.Optimizer,  # type: ignore
-                           scheduler: torch.optim.lr_scheduler.LambdaLR,
-                           device: torch.device,
-                           fp16: bool) -> int:
-    checkpoint = torch.load(
-        os.path.join(from_pretrained, 'checkpoint.bin'), map_location=device)
-    optimizer.load_state_dict(checkpoint['optimizer'])
-    if fp16:
-        assert APEX_FOUND
-        optimizer._lazy_init_maybe_master_weights()
-        optimizer._amp_stash.lazy_init_called = True
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        for param, saved in zip(amp.master_params(optimizer), checkpoint['master params']):
-            param.data.copy_(saved.data)
-        amp.load_state_dict(checkpoint['amp'])
-    scheduler.load_state_dict(checkpoint['scheduler'])
-    start_epoch = checkpoint['epoch'] + 1
-    return start_epoch
 
 
 class MetricsAccumulator:
@@ -260,28 +231,3 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
                        f"{eff_batch_size}")
             raise RuntimeError(message)
         return False
-
-
-def save_state(save_directory: typing.Union[str, Path],
-               model: nn.Module,
-               optimizer: torch.optim.Optimizer,  # type: ignore
-               scheduler: torch.optim.lr_scheduler.LambdaLR,
-               epoch: int) -> None:
-    save_directory = Path(save_directory)
-    if not save_directory.exists():
-        save_directory.mkdir()
-    else:
-        assert save_directory.is_dir(), "Save path should be a directory"
-    model_to_save = getattr(model, 'module', model)
-    model_to_save.save_pretrained(save_directory)
-    optimizer_state: typing.Dict[str, typing.Any] = {
-        'optimizer': optimizer.state_dict(),
-        'scheduler': scheduler.state_dict(),
-        'epoch': epoch}
-    if APEX_FOUND:
-        optimizer_state['master params'] = list(amp.master_params(optimizer))
-        try:
-            optimizer_state['amp'] = amp.state_dict()
-        except AttributeError:
-            pass
-    torch.save(optimizer_state, save_directory / 'checkpoint.bin')

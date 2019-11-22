@@ -1,4 +1,5 @@
 import typing
+import os
 import logging
 from timeit import default_timer as timer
 import itertools
@@ -45,15 +46,30 @@ class ForwardRunner:
     def __init__(self,
                  model: ProteinModel,
                  device: torch.device = torch.device('cuda:0'),
-                 n_gpu: int = 1):
+                 n_gpu: int = 1,
+                 fp16: bool = False,
+                 local_rank: int = -1):
 
         self.model = model
         self.device = device
         self.n_gpu = n_gpu
-        model = getattr(model, 'module', model)
+        self.fp16 = fp16
+        self.local_rank = local_rank
+
         forward_arg_keys = inspect.getfullargspec(model.forward).args
         forward_arg_keys = forward_arg_keys[1:]  # remove self argument
         self._forward_arg_keys = forward_arg_keys
+        assert 'input_ids' in self._forward_arg_keys
+
+    def initialize_distributed_model(self):
+        if self.local_rank != -1:
+            if not self.fp16:
+                self.model = DDP(self.model)
+            else:
+                flat_dist_call([param.data for param in self.model.parameters()],
+                               torch.distributed.broadcast, (0,))
+        elif self.n_gpu > 1:
+            self.model = nn.DataParallel(self.model)
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
@@ -100,23 +116,68 @@ class BackwardRunner(ForwardRunner):
     def __init__(self,
                  model: ProteinModel,
                  optimizer: optim.Optimizer,  # type: ignore
-                 scheduler: typing.Optional[optim.lr_scheduler.LambdaLR] = None,
                  gradient_accumulation_steps: int = 1,
                  device: torch.device = torch.device('cuda:0'),
                  n_gpu: int = 1,
                  fp16: bool = False,
+                 local_rank: int = -1,
                  max_grad_norm: float = 1.0,
-                 local_rank=-1):
+                 warmup_steps: int = 0,
+                 num_train_optimization_steps: int = 1000000):
 
-        super().__init__(model, device, n_gpu)
+        super().__init__(model, device, n_gpu, fp16, local_rank)
         self.optimizer = optimizer
-        self.scheduler = scheduler
-        self.fp16 = fp16
         self.max_grad_norm = max_grad_norm
         self._global_step = 0
         self._local_rank = local_rank
         self._overflow_buf = torch.cuda.IntTensor([0])  # type: ignore
         self.gradient_accumulation_steps = gradient_accumulation_steps
+
+        self.scheduler = WarmupLinearSchedule(
+            self.optimizer, warmup_steps, num_train_optimization_steps)
+
+    def initialize_fp16(self):
+        if self.fp16:
+            self.model, self.optimizer = amp.initialize(
+                self.model, self.optimizer, opt_level="O2", loss_scale="dynamic",
+                master_weights=True)
+            _amp_state.loss_scalers[0]._loss_scale = 2 ** 20
+
+    def resume_from_checkpoint(self, checkpoint_dir: str) -> int:
+        checkpoint = torch.load(
+            os.path.join(checkpoint_dir, 'checkpoint.bin'), map_location=self.device)
+        self.optimizer.load_state_dict(checkpoint['optimizer'])
+        if self.fp16:
+            self.optimizer._lazy_init_maybe_master_weights()
+            self.optimizer._amp_stash.lazy_init_called = True
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            for param, saved in zip(
+                    amp.master_params(self.optimizer), checkpoint['master params']):
+                param.data.copy_(saved.data)
+            amp.load_state_dict(checkpoint['amp'])
+        self.scheduler.load_state_dict(checkpoint['scheduler'])
+        start_epoch = checkpoint['epoch'] + 1
+        return start_epoch
+
+    def save_state(self, save_directory: typing.Union[str, Path], epoch_id: int):
+        save_directory = Path(save_directory)
+        if not save_directory.exists():
+            save_directory.mkdir()
+        else:
+            assert save_directory.is_dir(), "Save path should be a directory"
+        model_to_save = getattr(self.model, 'module', self.model)
+        model_to_save.save_pretrained(save_directory)
+        optimizer_state: typing.Dict[str, typing.Any] = {
+            'optimizer': self.optimizer.state_dict(),
+            'scheduler': self.scheduler.state_dict(),
+            'epoch': epoch_id}
+        if APEX_FOUND:
+            optimizer_state['master params'] = list(amp.master_params(self.optimizer))
+            try:
+                optimizer_state['amp'] = amp.state_dict()
+            except AttributeError:
+                pass
+        torch.save(optimizer_state, save_directory / 'checkpoint.bin')
 
     def backward(self, loss) -> None:
         if self.fp16:
@@ -396,34 +457,17 @@ def run_train(model_type: str,
         f"distributed_training: {local_rank != -1}, "
         f"16-bits training: {fp16}")
 
-    if fp16:
-        model, optimizer = amp.initialize(
-            model, optimizer, opt_level="O2", loss_scale="dynamic", master_weights=True)
-        _amp_state.loss_scalers[0]._loss_scale = 2 ** 20
+    runner = BackwardRunner(
+        model, optimizer, gradient_accumulation_steps, device, n_gpu,
+        fp16, local_rank, max_grad_norm, warmup_steps, num_train_optimization_steps)
 
-    scheduler = WarmupLinearSchedule(
-        optimizer, warmup_steps=warmup_steps, t_total=num_train_optimization_steps)
-
+    runner.initialize_fp16()
     if resume_from_checkpoint:
         assert from_pretrained is not None
-        start_epoch = utils.resume_from_checkpoint(
-            from_pretrained, optimizer, scheduler, device, fp16)
-        num_train_epochs -= start_epoch
+        runner.resume_from_checkpoint(from_pretrained)
     else:
         start_epoch = 0
-
-    if local_rank != -1:
-        if fp16:
-            model = DDP(model)
-        else:
-            flat_dist_call([param.data for param in model.parameters()],
-                           torch.distributed.broadcast, (0,))
-    elif n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    runner = BackwardRunner(
-        model, optimizer, scheduler, gradient_accumulation_steps,
-        device, n_gpu, fp16, max_grad_norm, local_rank)
+    runner.initialize_distributed_model()
 
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)
@@ -475,7 +519,7 @@ def run_train(model_type: str,
                 # Only save the model itself
                 output_model_dir = save_path / f"pytorch_model_{epoch_id}"
                 output_model_dir.mkdir()
-                utils.save_state(output_model_dir, model, optimizer, scheduler, epoch_id)
+                runner.save_state(output_model_dir, epoch_id)
                 logger.info(f"Saving model checkpoint to {output_model_dir}")
 
             utils.barrier_if_distributed()

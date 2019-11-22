@@ -38,8 +38,7 @@ warnings.filterwarnings(  # Ignore pytorch warning about loss gathering
 def create_base_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description='Parent parser for tape functions',
                                      add_help=False)
-    parser.add_argument('model_type', choices=list(models.KNOWN_MODELS),
-                        help='Base model class to run')
+    parser.add_argument('model_type', help='Base model class to run')
     parser.add_argument('--model_config_file', default=None, type=utils.check_is_file,
                         help='Config file for model')
     parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
