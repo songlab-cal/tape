@@ -140,9 +140,11 @@ class BPETokenizer(TAPETokenizer):
     Constructs a BPETokenizer.
 
     Args:
-        corpus_file (Union[str, Path], optional): Path to a full corpus file for Pfam. Must provide this or model_file.
-            If this argument is provided, it trains the tokenizer.
-        model_file (Union[str, Path], optional): Path to a trained model file. Must provide this or corpus_file.
+        corpus_file (Union[str, Path], optional): Path to a full corpus file for Pfam.
+            Must provide this or model_file. If this argument is provided, it trains
+            the tokenizer.
+        model_file (Union[str, Path], optional): Path to a trained model file. Must
+            provide this or corpus_file.
 
     Command To Train (This is run if a corpus file is passed in):
         spm_train --input pfam_strings.txt \
@@ -233,7 +235,8 @@ class BPETokenizer(TAPETokenizer):
         A BERT sequence has the following format: [CLS] X [SEP]
         """
 
-        return [self.convert_token_to_id(self.cls_token)] + token_ids + [self.convert_token_to_id(self.sep_token)]
+        return [self.convert_token_to_id(self.cls_token)] + token_ids + \
+            [self.convert_token_to_id(self.sep_token)]
 
     def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
         """
