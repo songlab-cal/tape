@@ -210,47 +210,15 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
-    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    arg_dict = vars(args)
+    arg_names = inspect.getfullargspec(training.run_eval).args
 
-    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
-    utils.set_random_seeds(args.seed, n_gpu)
+    missing = set(arg_names) - set(arg_dict.keys())
+    if missing:
+        raise RuntimeError(f"Missing arguments: {missing}")
+    eval_args = {name: arg_dict[name] for name in arg_names}
 
-    pretrained_dir = Path(args.from_pretrained)
-
-    logger.info(
-        f"device: {device} "
-        f"n_gpu: {n_gpu}")
-
-    model = models.get(args.model_type, args.task, args.model_config_file, args.from_pretrained)
-
-    if n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    runner = training.ForwardRunner(model, device, n_gpu)
-    valid_dataset = utils.setup_dataset(args.task, args.data_dir, args.split, args.tokenizer)
-    valid_loader = utils.setup_loader(
-        valid_dataset, args.batch_size, args.local_rank, n_gpu,
-        1, args.num_workers)
-
-    save_callbacks = [registry.get_callback(name) for name in args.save_callback]
-
-    if len(args.metrics) > 0 and 'save_predictions' not in args.save_callback:
-        save_callbacks.append(registry.get_callback('save_predictions'))
-    metric_functions = [registry.get_metric(name) for name in args.metrics]
-
-    save_outputs = training.run_eval_epoch(valid_loader, runner, is_master, save_callbacks)
-
-    target_key = getattr(model, 'module', model).target_key
-    prediction_key = getattr(model, 'module', model).prediction_key
-    metrics = {name: metric(save_outputs[target_key], save_outputs[prediction_key])
-               for name, metric in zip(args.metrics, metric_functions)}
-    save_outputs.update(metrics)
-    logger.info(f'Evaluation Metrics: {metrics}')
-
-    with (pretrained_dir / 'results.pkl').open('wb') as f:
-        pkl.dump(save_outputs, f)
-
-    return metrics
+    return training.run_eval(**eval_args)
 
 
 def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:

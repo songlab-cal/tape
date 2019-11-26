@@ -16,8 +16,9 @@ def save_default(model,
 
     model = getattr(model, 'module', model)  # get around DataParallel wrapper
 
-    target = inputs[model.target_key].cpu().numpy()
-    prediction = outputs[model.prediction_key].cpu().numpy()
+    # target = inputs[model.target_key].cpu().numpy()
+    # prediction = outputs[model.prediction_key].cpu().numpy()
+    target = inputs['targets']
 
     if target.shape[-1] == 1:
         target = np.squeeze(target, -1)

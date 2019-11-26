@@ -2,13 +2,13 @@ import typing
 import os
 import logging
 from timeit import default_timer as timer
-import itertools
-from collections import ChainMap
 import json
 from pathlib import Path
 import inspect
+import pickle as pkl
 
 from tqdm import tqdm
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -16,10 +16,15 @@ from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
 from protein_models import ProteinModel
-import tape_pytorch.utils as utils
-import tape_pytorch.errors as errors
-import tape_pytorch.models as models
-import tape_pytorch.visualization as visualization
+# import tape_pytorch.utils as utils
+# import tape_pytorch.errors as errors
+# import tape_pytorch.models as models
+# import tape_pytorch.visualization as visualization
+import utils
+import errors
+import models
+import visualization
+from .registry import registry
 
 try:
     from apex import amp
@@ -319,12 +324,12 @@ def run_valid_epoch(epoch_id: int,
     accumulator = utils.MetricsAccumulator()
 
     torch.set_grad_enabled(False)
-    runner.model.eval()
+    runner.eval()
 
     for batch in tqdm(valid_loader, desc='Running Eval', total=num_batches,
                       disable=not is_master, leave=False):
         loss, metrics = runner.forward(batch)  # type: ignore
-        accumulator.update(loss.item(), {name: value.item() for name, value in metrics.items()})
+        accumulator.update(loss, metrics)
 
     # Reduce loss across all processes if multiprocessing
     eval_loss = utils.reduce_scalar(accumulator.final_loss())
@@ -344,27 +349,37 @@ def run_valid_epoch(epoch_id: int,
     return eval_loss, metrics
 
 
+def _get_outputs_to_save(batch, outputs):
+    targets = batch['targets'].cpu().numpy()
+    outputs = outputs.cpu().numpy()
+    protein_length = batch['protein_length'].sum(1).cpu().numpy()
+
+    reshaped_output = []
+    for target, output, plength in zip(targets, outputs, protein_length):
+        output_slices = tuple(slice(1, plength - 1) if dim == protein_length.max() else
+                              slice(0, dim) for dim in output.shape)
+        output = output[output_slices]
+        target = target[output_slices]
+
+        reshaped_output.append((target, output))
+    reshaped_output
+
+
 def run_eval_epoch(eval_loader: DataLoader,
                    runner: ForwardRunner,
-                   is_master: bool = True,
-                   save_callback: typing.Optional[typing.Sequence[typing.Callable]] = None) \
-        -> typing.Dict[str, typing.List[typing.Any]]:
+                   is_master: bool = True) -> typing.List[typing.Tuple[np.ndarray, np.ndarray]]:
     num_batches = len(eval_loader)
     accumulator = utils.MetricsAccumulator()
     torch.set_grad_enabled(False)
-    runner.model.eval()
+    runner.eval()
 
     save_outputs = []
 
-    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches,
+    for batch in tqdm(eval_loader, desc='Evaluation', total=num_batches,
                       disable=not is_master):
         loss, metrics, outputs = runner.forward(batch, return_outputs=True)  # type: ignore
-        accumulator.update(
-            loss.item(), {name: value.item() for name, value in metrics.items()})
-        if save_callback is not None:
-            to_save = dict(ChainMap(
-                *(callback(runner.model, batch, outputs) for callback in save_callback)))
-            save_outputs.append(to_save)
+        accumulator.update(loss, metrics)
+        save_outputs.append(_get_outputs_to_save(batch, outputs))
 
     eval_loss = utils.reduce_scalar(accumulator.final_loss())
     final_print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
@@ -373,15 +388,7 @@ def run_eval_epoch(eval_loader: DataLoader,
         final_print_str += f"[{name.capitalize()}: {value:.5g}]"
     logger.info(final_print_str)
 
-    if len(save_outputs) > 0:
-        keys = save_outputs[0].keys()
-        output_dict = {
-            key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-            for key in keys}
-    else:
-        output_dict = {}
-
-    return output_dict
+    return save_outputs
 
 
 def run_train(model_type: str,
@@ -419,8 +426,8 @@ def run_train(model_type: str,
     device, n_gpu, is_master = utils.setup_distributed(
         local_rank, no_cuda)
 
-    exp_name = utils.get_expname(exp_name, task, model_type)
-    save_path = Path(output_dir) / exp_name
+    exp_dir = utils.get_expname(exp_name, task, model_type)
+    save_path = Path(output_dir) / exp_dir
 
     if is_master:
         # save all the hidden parameters.
@@ -446,7 +453,7 @@ def run_train(model_type: str,
 
     model = models.get(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
-    viz = visualization.get(log_dir, exp_name, local_rank, debug=debug)
+    viz = visualization.get(log_dir, exp_dir, local_rank, debug=debug)
     viz.log_config(input_args)
     viz.log_config(model.config.to_dict())
     viz.watch(model)
@@ -464,7 +471,7 @@ def run_train(model_type: str,
     runner.initialize_fp16()
     if resume_from_checkpoint:
         assert from_pretrained is not None
-        runner.resume_from_checkpoint(from_pretrained)
+        start_epoch = runner.resume_from_checkpoint(from_pretrained)
     else:
         start_epoch = 0
     runner.initialize_distributed_model()
@@ -538,3 +545,61 @@ def run_train(model_type: str,
     logger.info(f"Finished training after {num_train_epochs} epochs.")
     if best_val_loss != float('inf'):
         logger.log(35, f"Best Val Loss: {best_val_loss}")
+
+
+def run_eval(model_type: str,
+             task: str,
+             from_pretrained: str,
+             split: str = 'test',
+             batch_size: int = 1024,
+             model_config_file: typing.Optional[str] = None,
+             data_dir: str = './data',
+             vocab_file: str = './data/pfam.model',
+             no_cuda: bool = False,
+             seed: int = 42,
+             tokenizer: str = 'amino_acid',
+             num_workers: int = 8,
+             debug: bool = False,
+             # save_callback: typing.Tuple[str, ...] = (),
+             metrics: typing.Tuple[str, ...] = (),
+             log_level: typing.Union[str, int] = logging.INFO) -> typing.Dict[str, float]:
+
+    local_rank = -1  # TAPE does not support distributed evaluation
+    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+    utils.setup_logging(local_rank, save_path=None, log_level=log_level)
+    utils.set_random_seeds(seed, n_gpu)
+
+    pretrained_dir = Path(from_pretrained)
+
+    logger.info(
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
+
+    model = models.get(model_type, task, model_config_file, from_pretrained)
+
+    if n_gpu > 1:
+        model = nn.DataParallel(model)  # type: ignore
+
+    runner = ForwardRunner(model, device, n_gpu)
+    runner.initialize_distributed_model()
+    valid_dataset = utils.setup_dataset(task, data_dir, split, tokenizer)
+    valid_loader = utils.setup_loader(
+        valid_dataset, batch_size, local_rank, n_gpu,
+        1, num_workers)
+
+    # save_callbacks = [registry.get_callback(name) for name in save_callback]
+
+    # if len(metrics) > 0 and 'save_predictions' not in save_callback:
+        # save_callbacks.append(registry.get_callback('save_predictions'))
+    metric_functions = [registry.get_metric(name) for name in metrics]
+
+    save_outputs = run_eval_epoch(valid_loader, runner, is_master)
+
+    metrics_to_save = {name: metric(save_outputs)
+                       for name, metric in zip(metrics, metric_functions)}
+    logger.info(f'Evaluation Metrics: {metrics}')
+
+    with (pretrained_dir / 'results.pkl').open('wb') as f:
+        pkl.dump((metrics_to_save, save_outputs), f)
+
+    return metrics_to_save
