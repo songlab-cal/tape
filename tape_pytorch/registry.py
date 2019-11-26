@@ -42,7 +42,6 @@ class Registry:
 
     task_name_mapping: Dict[str, TAPETaskSpec] = {}
     tokenizer_name_mapping: Dict[str, Type] = {}
-    callback_name_mapping: Dict[str, Callable] = {}
     metric_name_mapping: Dict[str, Callable] = {}
 
     @classmethod
@@ -51,6 +50,49 @@ class Registry:
                       num_labels: int = -1,
                       dataset: Optional[Type[Dataset]] = None,
                       models: Optional[Dict[str, ProteinModel]] = None):
+        """ Register a a new TAPE task. This creates a new TAPETaskSpec.
+
+        Args:
+
+            task_name (str): The name of the TAPE task.
+            num_labels (int): Number of labels used if this is a classification task. If this
+                is not a classification task, simply leave the default as -1.
+            dataset (Type[Dataset]): The dataset used in the TAPE task.
+            models (Optional[Dict[str, ProteinModel]]): The set of models that can be used for
+                this task. If you do not pass this argument, you can register models to the task
+                later by using `registry.register_task_model`. Default: {}.
+
+        Examples:
+
+        There are two ways of registering a new task. First, one can define the task by simply
+        declaring all the components, and then calling the register method, like so:
+
+            class SecondaryStructureDataset(TAPEDataset):
+                ...
+
+            class ProteinBertForSequenceToSequenceClassification():
+                ...
+
+            registry.register_task(
+                'secondary_structure', 3, SecondaryStructureDataset,
+                {'transformer': ProteinBertForSequenceToSequenceClassification})
+
+        This will register a new task, 'secondary_structure', with a single model. More models
+        can be added with `registry.register_task_model`. Alternatively, this can be used as a
+        decorator:
+
+            @registry.regsiter_task('secondary_structure', 3)
+            class SecondaryStructureDataset(TAPEDataset):
+                ...
+
+            @registry.register_task_model('secondary_structure', 'transformer')
+            class ProteinBertForSequenceToSequenceClassification():
+                ...
+
+        These two pieces of code are exactly equivalent, in terms of the resulting registry
+        state.
+
+        """
         if dataset is not None:
             if models is None:
                 models = {}
@@ -61,6 +103,10 @@ class Registry:
 
     @classmethod
     def register_task_spec(cls, task_name: str, task_spec: Optional[TAPETaskSpec] = None):
+        """ Registers a task_spec directly. If you find it easier to actually create a
+            TAPETaskSpec manually, and then register it, feel free to use this method,
+            but otherwise it is likely easier to use `registry.register_task`.
+        """
         if task_spec is not None:
             if task_name in cls.task_name_mapping:
                 raise KeyError(f"A task with name '{task_name}' is already registered")
@@ -74,47 +120,41 @@ class Registry:
                             task_name: str,
                             model_name: str,
                             model_cls: Optional[Type[ProteinModel]] = None):
-        r"""Register a task model to registry with key 'name'
+        r"""Register a specific model to a task with the provided model name.
+            The task must already be in the registry - you cannot register a
+            model to an unregistered task.
 
         Args:
-            name: Key with which the task model will be registered.
+            task_name (str): Name of task to which to register the model.
+            model_name (str): Name of model to use when registering task, this
+                is the name that you will use to refer to the model on the
+                command line.
+            model_cls (Type[ProteinModel]): The model to register.
 
-        Usage::
-            from tape_pytorch.registry import registry
-            import torch.nn as nn
+        Examples:
 
-            @registry.register_task_model('fluorescence')
-            @registry.register_task_model('stability')
-            class SequenceToFloatModel(nn.Module):
+        As with `registry.register_task`, this can both be used as a regular
+        python function, and as a decorator. For example this:
+
+            class ProteinBertForSequenceToSequenceClassification():
                 ...
+            registry.register_task_model(
+                'secondary_structure', 'transformer',
+                ProteinBertForSequenceToSequenceClassification)
+
+        and as a decorator:
+
+            @registry.register_task_model('secondary_structure', 'transformer')
+            class ProteinBertForSequenceToSequenceClassification():
+                ...
+
+        are both equivalent.
         """
         if task_name not in cls.task_name_mapping:
             raise KeyError(
                 f"Tried to register a task model for an unregistered task: {task_name}. "
                 f"Make sure to register the task {task_name} first.")
         return cls.task_name_mapping[task_name].register_model(model_name, model_cls)
-
-    @classmethod
-    def register_callback(cls, name: str) -> Callable[[Callable], Callable]:
-        r"""Register a callback to registry with key 'name'
-
-        Args:
-            name: Key with which the callback will be registered.
-
-        Usage::
-            from tape_pytorch.registry import registry
-
-            @registry.register_callback('save_fluorescence')
-            def save_float_prediction(inputs, outputs):
-                ...
-        """
-
-        def wrap(fn: Callable) -> Callable:
-            assert callable(fn), "All callbacks must be callable"
-            cls.callback_name_mapping[name] = fn
-            return fn
-
-        return wrap
 
     @classmethod
     def register_metric(cls, name: str) -> Callable[[Callable], Callable]:
@@ -166,10 +206,6 @@ class Registry:
     @classmethod
     def get_task_spec(cls, name: str) -> TAPETaskSpec:
         return cls.task_name_mapping[name]
-
-    @classmethod
-    def get_callback(cls, name: str) -> Callable:
-        return cls.callback_name_mapping[name]
 
     @classmethod
     def get_metric(cls, name: str) -> Callable:
