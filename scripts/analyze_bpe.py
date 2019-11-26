@@ -22,7 +22,8 @@ while tokens[0][0] == "<":  # remove special tokens
 
 token_lengths = Counter([len(token) for token in tokens])
 
-length_probs = {length: freq / sum(token_lengths.values()) for length, freq in token_lengths.items()}
+length_probs = {length: freq / sum(token_lengths.values())
+                for length, freq in token_lengths.items()}
 lengths = list(length_probs.keys())
 probs = list(length_probs.values())
 

@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from protein_models import ProteinConfig
 from protein_models import ProteinModel
 from protein_models.modeling_utils import SequenceToSequenceClassificationHead

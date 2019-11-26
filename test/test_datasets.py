@@ -11,7 +11,8 @@ def test_pfam_dataset():
 
     # Test 10 random accesses
     for _ in range(10):
-        masked_ids, attention_mask, labels, clan, family = dataset[random.randint(0, len(dataset) - 1)]
+        masked_ids, attention_mask, labels, clan, family = \
+            dataset[random.randint(0, len(dataset) - 1)]
         assert isinstance(masked_ids, np.ndarray)
         assert isinstance(attention_mask, np.ndarray)
         assert isinstance(labels, np.ndarray)
@@ -98,7 +99,8 @@ def test_proteinnet_dataset():
 
     # Test 10 random accesses
     for _ in range(10):
-        ids, attention_mask, contact_map, valid_mask = dataset[random.randint(0, len(dataset) - 1)]
+        ids, attention_mask, contact_map, valid_mask = \
+            dataset[random.randint(0, len(dataset) - 1)]
         assert isinstance(ids, np.ndarray)
         assert isinstance(attention_mask, np.ndarray)
         assert isinstance(contact_map, np.ndarray)

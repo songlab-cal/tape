@@ -1,7 +1,6 @@
 import torch
 import torch.distributed as dist
 import argparse
-import multiprocessing as mp
 import tape_pytorch.utils as utils
 from tape_pytorch.errors import EarlyStopping
 import os
