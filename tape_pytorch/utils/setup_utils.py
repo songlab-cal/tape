@@ -96,14 +96,12 @@ def setup_dataset(task: str,
     return task_spec.dataset(data_dir, split, tokenizer)  # type: ignore
 
 
-def setup_loader(task: str,
-                 dataset: TAPEDataset,
+def setup_loader(dataset: TAPEDataset,
                  batch_size: int,
                  local_rank: int,
                  n_gpu: int,
                  gradient_accumulation_steps: int,
                  num_workers: int) -> DataLoader:
-    task_spec = registry.get_task_spec(task)
     sampler = DistributedSampler(dataset) if local_rank != -1 else RandomSampler(dataset)
     batch_size = get_effective_batch_size(
         batch_size, local_rank, n_gpu, gradient_accumulation_steps) * n_gpu
@@ -114,7 +112,7 @@ def setup_loader(task: str,
     loader = DataLoader(
         dataset,
         num_workers=num_workers,
-        collate_fn=task_spec.collate_fn(),
+        collate_fn=dataset.collate_fn,
         batch_sampler=batch_sampler)
 
     return loader

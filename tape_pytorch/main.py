@@ -229,7 +229,7 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
     runner = training.ForwardRunner(model, device, n_gpu)
     valid_dataset = utils.setup_dataset(args.task, args.data_dir, args.split, args.tokenizer)
     valid_loader = utils.setup_loader(
-        args.task, valid_dataset, args.batch_size, args.local_rank, n_gpu,
+        valid_dataset, args.batch_size, args.local_rank, n_gpu,
         1, args.num_workers)
 
     save_callbacks = [registry.get_callback(name) for name in args.save_callback]
@@ -281,7 +281,7 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
 
     dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
     loader = utils.setup_loader(
-        args.task, dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
+        dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
 
     torch.set_grad_enabled(False)
     model.eval()

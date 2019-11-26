@@ -1,6 +1,5 @@
 from typing import Union, List, Tuple, Sequence, Dict, Any
 from copy import copy
-from abc import ABC, abstractmethod
 from pathlib import Path
 import pickle as pkl
 import logging
@@ -124,24 +123,6 @@ class LMDBDataset(Dataset):
         return item
 
 
-class PaddedBatch(ABC):
-
-    @abstractmethod
-    def __call__(self, batch: List[Sequence[np.ndarray]]) -> Dict[str, np.ndarray]:
-        return NotImplemented
-
-    def _pad(self, sequences: Sequence[np.ndarray], constant_value=0) -> torch.Tensor:
-        batch_size = len(sequences)
-        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
-        array = np.zeros(shape, sequences[0].dtype) + constant_value
-
-        for arr, seq in zip(array, sequences):
-            arrslice = tuple(slice(dim) for dim in seq.shape)
-            arr[arrslice] = seq
-
-        return torch.from_numpy(array)
-
-
 class TAPEDataset(Dataset):
 
     def __init__(self,
@@ -166,17 +147,17 @@ class TAPEDataset(Dataset):
             data_file = data_path / data_file
             if not data_file.exists():
                 raise FileNotFoundError(data_file)
-
-        dataset_type = {
-            '.lmdb': LMDBDataset,
-            '.fasta': FastaDataset}
-        self._dataset = dataset_type[data_file.suffix](data_file, in_memory)
+        if data_file.suffix == '.lmdb':
+            self._dataset = LMDBDataset(data_file)
+        elif data_file.suffix == '.fasta':
+            self._dataset = FastaDataset(data_file)
+        else:
+            raise ValueError(f"Unrecognized dataset type: {data_file.suffix}")
 
     def __len__(self) -> int:
         return len(self._dataset)
 
-    def __getitem__(self, index: int) -> \
-            Tuple[Dict[str, Any], Union[List[int], List[str]], List[int]]:
+    def __getitem__(self, index: int) -> Tuple[Any, ...]:
         item = self._dataset[index]
         tokens = self.tokenizer.tokenize(item['primary'])
         tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
@@ -188,18 +169,26 @@ class TAPEDataset(Dataset):
 
         return item, tokens, input_mask
 
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
+        items, tokens, input_mask = zip(*batch)
+        items = list(items)
+        tokens = torch.from_numpy(self.pad_sequences(tokens))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask))
+        return {'items': items, 'tokens': tokens, 'input_mask': input_mask}
 
-class EmbedBatch(PaddedBatch):
+    def pad_sequences(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+        batch_size = len(sequences)
+        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
+        array = np.zeros(shape, sequences[0].dtype) + constant_value
 
-    def __call__(self, batch):
-        _, input_ids, input_mask = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
+        for arr, seq in zip(array, sequences):
+            arrslice = tuple(slice(dim) for dim in seq.shape)
+            arr[arrslice] = seq
 
-        return {'input_ids': input_ids,
-                'input_mask': input_mask}
+        return array
 
 
+@registry.register_task('mlm')
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
@@ -236,6 +225,19 @@ class PfamDataset(TAPEDataset):
 
         return masked_token_ids, input_mask, labels, item['clan'], item['family']
 
+    def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
+        input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
+
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zeros
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros as well
+        lm_label_ids = self.pad_sequences(lm_label_ids, -1)  # ignore_index is -1
+        clan = torch.LongTensor(clan)
+        family = torch.LongTensor(family)
+
+        return {'input_ids': input_ids,
+                'input_mask': input_mask,
+                'targets': lm_label_ids}
+
     def _apply_bert_mask(self, tokens: List[str]) -> Tuple[List[str], List[int]]:
         masked_tokens = copy(tokens)
         labels = np.zeros([len(tokens)], np.int64) - 1
@@ -266,24 +268,7 @@ class PfamDataset(TAPEDataset):
         return masked_tokens, labels
 
 
-class PfamBatch(PaddedBatch):
-
-    def __call__(self, batch):
-        input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
-
-        input_ids = self._pad(input_ids, 0)  # pad index is zeros
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros as well
-        lm_label_ids = self._pad(lm_label_ids, -1)  # ignore_index is -1
-        clan = torch.LongTensor(clan)
-        family = torch.LongTensor(family)
-
-        return {'input_ids': input_ids,
-                'input_mask': input_mask,
-                'masked_lm_labels': lm_label_ids}
-                # 'clan_labels': clan,
-                # 'family_labels': family}
-
-
+@registry.register_task('fluorescence')
 class FluorescenceDataset(TAPEDataset):
 
     def __init__(self,
@@ -305,20 +290,18 @@ class FluorescenceDataset(TAPEDataset):
         item, token_ids, input_mask = super().__getitem__(index)
         return token_ids, input_mask, float(item['log_fluorescence'][0])
 
-
-class FluorescenceBatch(PaddedBatch):
-
-    def __call__(self, batch):
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fluorescence_true_value = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
         fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
-                'true_value': fluorescence_true_value}
+                'targets': fluorescence_true_value}
 
 
+@registry.register_task('stability')
 class StabilityDataset(TAPEDataset):
 
     def __init__(self,
@@ -340,20 +323,18 @@ class StabilityDataset(TAPEDataset):
         item, token_ids, input_mask = super().__getitem__(index)
         return token_ids, input_mask, float(item['stability_score'][0])
 
-
-class StabilityBatch(PaddedBatch):
-
-    def __call__(self, batch):
-        input_ids, input_mask, stability_score = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
-        stability_score = torch.FloatTensor(stability_score)
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
+        input_ids, input_mask, stability_true_value = tuple(zip(*batch))
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
+        stability_true_value = torch.FloatTensor(stability_true_value)
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
-                'true_value': stability_score}
+                'targets': stability_true_value}
 
 
+@registry.register_task('remote_homology', num_labels=1195)
 class RemoteHomologyDataset(TAPEDataset):
 
     def __init__(self,
@@ -377,20 +358,18 @@ class RemoteHomologyDataset(TAPEDataset):
         item, token_ids, input_mask = super().__getitem__(index)
         return token_ids, input_mask, item['fold_label']
 
-
-class RemoteHomologyBatch(PaddedBatch):
-
-    def __call__(self, batch):
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fold_label = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
         fold_label = torch.LongTensor(fold_label)
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
-                'sequence_label': fold_label}
+                'targets': fold_label}
 
 
+@registry.register_task('contact_prediction')
 class ProteinnetDataset(TAPEDataset):
 
     def __init__(self,
@@ -421,22 +400,18 @@ class ProteinnetDataset(TAPEDataset):
 
         return token_ids, input_mask, contact_map
 
-
-class ProteinnetBatch(PaddedBatch):
-
-    def __call__(self, batch):
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, contact_labels = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
-        contact_labels = self._pad(contact_labels, -1)
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
+        contact_labels = self.pad_sequences(contact_labels, -1)
 
-        batch = {'input_ids': input_ids,
-                 'input_mask': input_mask,
-                 'contact_labels': contact_labels}
-
-        return batch
+        return {'input_ids': input_ids,
+                'input_mask': input_mask,
+                'targets': contact_labels}
 
 
+@registry.register_task('secondary_structure', num_labels=3)
 class SecondaryStructureDataset(TAPEDataset):
 
     def __init__(self,
@@ -476,31 +451,18 @@ class SecondaryStructureDataset(TAPEDataset):
         token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens))  # type: ignore
         return token_ids, input_mask, labels, token_lengths
 
-
-class SecondaryStructureBatch(PaddedBatch):
-
-    def __call__(self, batch):
+    def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, ss_label, token_lengths = tuple(zip(*batch))
-        input_ids = self._pad(input_ids, 0)  # pad index is zero
-        input_mask = self._pad(input_mask, 0)  # pad input_mask with zeros
-        ss_label = self._pad(ss_label, -1)
+        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
+        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
+        ss_label = self.pad_sequences(ss_label, -1)
 
-        batch = {'input_ids': input_ids,
-                 'input_mask': input_mask,
-                 'amino_acid_labels': ss_label}
+        output = {'input_ids': input_ids,
+                  'input_mask': input_mask,
+                  'targets': ss_label}
 
         if not any(tk is None for tk in token_lengths):
-            token_lengths = self._pad(token_lengths, 1)
-            batch['token_lengths'] = token_lengths
+            token_lengths = self.pad_sequences(token_lengths, 1)
+            output['token_lengths'] = token_lengths
 
-        return batch
-
-
-registry.register_task('embed', TAPEDataset, EmbedBatch)
-registry.register_task('mlm', PfamDataset, PfamBatch)
-registry.register_task('fluorescence', FluorescenceDataset, FluorescenceBatch)
-registry.register_task('stability', StabilityDataset, StabilityBatch)
-registry.register_task('remote_homology', RemoteHomologyDataset, RemoteHomologyBatch, 1195)
-registry.register_task('contact_prediction', ProteinnetDataset, ProteinnetBatch)
-registry.register_task(
-    'secondary_structure', SecondaryStructureDataset, SecondaryStructureBatch, 3)
+        return output

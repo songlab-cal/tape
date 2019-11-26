@@ -1,4 +1,4 @@
-from typing import Dict, Type, Callable, Optional, NamedTuple, List, Any
+from typing import Dict, Type, Callable, Optional, NamedTuple
 from torch.utils.data import Dataset
 from protein_models import ProteinModel
 
@@ -11,8 +11,6 @@ class TAPETaskSpec(NamedTuple):
         The name of the TAPE task
     dataset (Type[Dataset]):
         The dataset used in the TAPE task
-    collate_fn (Callable[[List], Dict[str, Any]]):
-        The collate function used to return batches for this task
     num_labels (int):
         number of labels used if this is a classification task
     models (Dict[str, ProteinModel]):
@@ -21,7 +19,6 @@ class TAPETaskSpec(NamedTuple):
 
     name: str
     dataset: Type[Dataset]
-    collate_fn: Type[Callable[[List], Dict[str, Any]]]
     num_labels: int = -1
     models: Dict[str, ProteinModel] = {}
 
@@ -51,14 +48,16 @@ class Registry:
     @classmethod
     def register_task(cls,
                       task_name: str,
-                      dataset: Type[Dataset],
-                      collate_fn: Type[Callable[[List], Dict[str, Any]]],
                       num_labels: int = -1,
-                      models: Optional[Dict[str, ProteinModel]] = None) -> TAPETaskSpec:
-        if models is None:
-            models = {}
-        task_spec = TAPETaskSpec(task_name, dataset, collate_fn, num_labels, models)
-        return cls.register_task_spec(task_name, task_spec)
+                      dataset: Optional[Type[Dataset]] = None,
+                      models: Optional[Dict[str, ProteinModel]] = None):
+        if dataset is not None:
+            if models is None:
+                models = {}
+            task_spec = TAPETaskSpec(task_name, dataset, num_labels, models)
+            return cls.register_task_spec(task_name, task_spec)
+        else:
+            return lambda dataset: cls.register_task(task_name, num_labels, dataset, models)
 
     @classmethod
     def register_task_spec(cls, task_name: str, task_spec: Optional[TAPETaskSpec] = None):
