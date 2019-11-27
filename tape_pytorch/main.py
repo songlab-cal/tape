@@ -88,7 +88,7 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Maximum gradient norm')
     parser.add_argument('--exp_name', default=None, type=str,
                         help='Name to give to this experiment')
-    parser.add_argument('--from_pretrained', default=None, type=utils.check_is_dir,
+    parser.add_argument('--from_pretrained', default=None, type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--log_dir', default='./logs', type=str)
     parser.add_argument('--eval_freq', type=int, default=1,
@@ -110,14 +110,10 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                                      parents=[base_parser])
     parser.add_argument('task', choices=list(registry.task_name_mapping.keys()),
                         help='TAPE Task to train/eval on')
-    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+    parser.add_argument('from_pretrained', type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
-    parser.add_argument('--save_callback', default=['save_predictions'],
-                        help=f'Callbacks to use when saving. '
-                             f'Choices: {list(registry.callback_name_mapping.keys())}',
-                        nargs='*')
     parser.add_argument('--metrics', default=[],
                         help=f'Metrics to run on the result. '
                              f'Choices: {list(registry.metric_name_mapping.keys())}',
@@ -135,7 +131,7 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='File containing set of proteins to embed')
     parser.add_argument('outfile', type=str,
                         help='Name of output file')
-    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+    parser.add_argument('from_pretrained', type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')

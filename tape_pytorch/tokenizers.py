@@ -134,6 +134,67 @@ class AminoAcidTokenizer(TAPETokenizer):
         return cls()
 
 
+@registry.register_tokenizer('unirep')
+class UniRepTokenizer(TAPETokenizer):
+    r""" Constructs a UniRepTokenizer. This matches the tokenizer from
+         Alley et al. https://www.biorxiv.org/content/10.1101/589333v1.
+    """
+
+    VOCAB = {
+        "<pad>": 0, "M": 1, "R": 2, "H": 3, "K": 4, "D": 5, "E": 6, "S": 7, "T": 8, "N": 9,
+        "Q": 10, "C": 11, "U": 12, "G": 13, "P": 14, "A": 15, "V": 16, "I": 17, "F": 18,
+        "Y": 19, "W": 20, "L": 21, "O": 22, "X": 23, "Z": 23, "B": 23, "J": 23, "start": 24,
+        "stop": 25}
+
+    TOKENS = list(VOCAB.keys())
+
+    def __init__(self):
+        super().__init__()
+
+    @property
+    def vocab_size(self) -> int:
+        return len(self.TOKENS)
+
+    def tokenize(self, seq: str) -> List[str]:
+        return [x for x in seq]
+
+    def convert_token_to_id(self, token: str) -> int:
+        """ Converts a token (str/unicode) in an id using the vocab. """
+        try:
+            return self.VOCAB[token]
+        except KeyError:
+            raise KeyError(f"Unrecognized token: '{token}'")
+
+    def convert_id_to_token(self, index: int) -> str:
+        """Converts an index (integer) in a token (string/unicode) using the vocab."""
+        try:
+            return self.TOKENS[index]
+        except IndexError:
+            raise IndexError(f"Unrecognized index: '{index}'")
+
+    def convert_tokens_to_string(self, tokens: str) -> str:
+        """ Converts a sequence of tokens (string) in a single string. """
+        return ''.join(tokens)
+
+    def add_special_tokens(self, token_ids: List[str]) -> List[str]:
+        """
+        Adds special tokens to the a sequence for sequence classification tasks.
+        """
+        return [self.start_token] + token_ids + [self.stop_token]
+
+    @classmethod
+    def from_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    @property
+    def start_token(self) -> str:
+        return "start"
+
+    @property
+    def stop_token(self) -> str:
+        return "stop"
+
+
 @registry.register_tokenizer('bpe')
 class BPETokenizer(TAPETokenizer):
     r"""
