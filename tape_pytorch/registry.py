@@ -1,6 +1,9 @@
-from typing import Dict, Type, Callable, Optional, NamedTuple
+from typing import Dict, Type, Callable, Optional, NamedTuple, Union
 from torch.utils.data import Dataset
-from protein_models import ProteinModel
+from .models.modeling_utils import ProteinModel
+from pathlib import Path
+
+PathType = Union[str, Path]
 
 
 class TAPETaskSpec(NamedTuple):
@@ -20,7 +23,7 @@ class TAPETaskSpec(NamedTuple):
     name: str
     dataset: Type[Dataset]
     num_labels: int = -1
-    models: Dict[str, ProteinModel] = {}
+    models: Dict[str, Type[ProteinModel]] = {}
 
     def register_model(self, model_name: str, model_cls: Optional[Type[ProteinModel]] = None):
         if model_cls is not None:
@@ -49,7 +52,7 @@ class Registry:
                       task_name: str,
                       num_labels: int = -1,
                       dataset: Optional[Type[Dataset]] = None,
-                      models: Optional[Dict[str, ProteinModel]] = None):
+                      models: Optional[Dict[str, Type[ProteinModel]]] = None):
         """ Register a a new TAPE task. This creates a new TAPETaskSpec.
 
         Args:
@@ -214,6 +217,39 @@ class Registry:
     @classmethod
     def get_tokenizer_class(cls, name: str) -> Type:
         return cls.tokenizer_name_mapping[name]
+
+    @classmethod
+    def get_task_model(cls,
+                       model_name: str,
+                       task_name: str,
+                       config_file: Optional[PathType] = None,
+                       load_dir: Optional[PathType] = None) -> ProteinModel:
+        """ Create a TAPE task model, either from scratch or from a pretrained model.
+            This is mostly a helper function that evaluates the if statements in a
+            sensible order if you pass all three of the arguments.
+        Args:
+            model_name (str): Which type of model to create (e.g. transformer, unirep, ...)
+            task_name (str): The TAPE task for which to create a model
+            config_file (str, optional): A json config file that specifies hyperparameters
+            load_dir (str, optional): A save directory for a pretrained model
+        Returns:
+            model (ProteinModel): A TAPE task model
+        """
+        task_spec = registry.get_task_spec(task_name)
+        model_cls = task_spec.get_model(model_name)
+
+        if load_dir is not None:
+            model = model_cls.from_pretrained(load_dir, num_labels=task_spec.num_labels)
+        else:
+            config_class = model_cls.config_class
+            if config_file is not None:
+                config = config_class.from_json_file(config_file)
+            else:
+                config = config_class()
+            config.num_labels = task_spec.num_labels
+            model = model_cls(config)
+        model = model.cuda()
+        return model
 
 
 registry = Registry()

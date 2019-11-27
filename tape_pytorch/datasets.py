@@ -188,7 +188,8 @@ class TAPEDataset(Dataset):
         return array
 
 
-@registry.register_task('mlm')
+@registry.register_task('language_modeling')  # language modeling
+@registry.register_task('masked_language_modeling')  # masked language modeling
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:

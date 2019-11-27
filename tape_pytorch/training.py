@@ -15,12 +15,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
-from protein_models import ProteinModel
 from . import utils
 from . import errors
-from . import models
 from . import visualization
 from .registry import registry
+from .models.modeling_utils import ProteinModel
 
 try:
     from apex import amp
@@ -447,7 +446,7 @@ def run_train(model_type: str,
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)
 
-    model = models.get(model_type, task, model_config_file, from_pretrained)
+    model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
     viz = visualization.get(log_dir, exp_dir, local_rank, debug=debug)
     viz.log_config(input_args)
@@ -571,7 +570,7 @@ def run_eval(model_type: str,
         f"device: {device} "
         f"n_gpu: {n_gpu}")
 
-    model = models.get(model_type, task, model_config_file, from_pretrained)
+    model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
 
     if n_gpu > 1:
         model = nn.DataParallel(model)  # type: ignore
