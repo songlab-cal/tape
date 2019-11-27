@@ -148,7 +148,7 @@ class TAPEDataset(Dataset):
             if not data_file.exists():
                 raise FileNotFoundError(data_file)
         if data_file.suffix == '.lmdb':
-            self._dataset = LMDBDataset(data_file)
+            self._dataset: Dataset = LMDBDataset(data_file)
         elif data_file.suffix == '.fasta':
             self._dataset = FastaDataset(data_file)
         else:
@@ -228,11 +228,12 @@ class PfamDataset(TAPEDataset):
     def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zeros
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros as well
-        lm_label_ids = self.pad_sequences(lm_label_ids, -1)  # ignore_index is -1
-        clan = torch.LongTensor(clan)
-        family = torch.LongTensor(family)
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        # ignore_index is -1
+        lm_label_ids = torch.from_numpy(self.pad_sequences(lm_label_ids, -1))
+        clan = torch.LongTensor(clan)  # type: ignore
+        family = torch.LongTensor(family)  # type: ignore
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -292,9 +293,9 @@ class FluorescenceDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fluorescence_true_value = tuple(zip(*batch))
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
-        fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)  # type: ignore
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -325,9 +326,9 @@ class StabilityDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, stability_true_value = tuple(zip(*batch))
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
-        stability_true_value = torch.FloatTensor(stability_true_value)
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        stability_true_value = torch.FloatTensor(stability_true_value)  # type: ignore
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -360,9 +361,9 @@ class RemoteHomologyDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fold_label = tuple(zip(*batch))
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
-        fold_label = torch.LongTensor(fold_label)
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        fold_label = torch.LongTensor(fold_label)  # type: ignore
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -402,9 +403,9 @@ class ProteinnetDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, contact_labels = tuple(zip(*batch))
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
-        contact_labels = self.pad_sequences(contact_labels, -1)
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        contact_labels = torch.from_numpy(self.pad_sequences(contact_labels, -1))
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -429,40 +430,27 @@ class SecondaryStructureDataset(TAPEDataset):
         data_path = Path(data_path)
         data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
         super().__init__(
-            data_path, data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
+            data_path, data_file, tokenizer, in_memory)
 
         self._num_classes = num_classes
 
     def __getitem__(self, index: int):
-        item, tokens, input_mask = super().__getitem__(index)
+        item, token_ids, input_mask = super().__getitem__(index)
 
         # pad with -1s because of cls/sep tokens
         labels = np.asarray(item[f'ss{self._num_classes}'], np.int64)
         labels = np.pad(labels, (1, 1), 'constant', constant_values=-1)
 
-        if isinstance(self.tokenizer, tokenizers.BPETokenizer):
-            # ignore the cls/sep tokens
-            token_lengths = np.array([len(str(token)) for token in tokens[1:-1]])
-            token_lengths[0] -= 1  # first length has a start token pre-pended
-            token_lengths = np.pad(token_lengths, (1, 1), 'constant', constant_values=1)
-        else:
-            token_lengths = None
-
-        token_ids = np.array(self.tokenizer.convert_tokens_to_ids(tokens))  # type: ignore
-        return token_ids, input_mask, labels, token_lengths
+        return token_ids, input_mask, labels
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
-        input_ids, input_mask, ss_label, token_lengths = tuple(zip(*batch))
-        input_ids = self.pad_sequences(input_ids, 0)  # pad index is zero
-        input_mask = self.pad_sequences(input_mask, 0)  # pad input_mask with zeros
-        ss_label = self.pad_sequences(ss_label, -1)
+        input_ids, input_mask, ss_label = tuple(zip(*batch))
+        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        ss_label = torch.from_numpy(self.pad_sequences(ss_label, -1))
 
         output = {'input_ids': input_ids,
                   'input_mask': input_mask,
                   'targets': ss_label}
-
-        if not any(tk is None for tk in token_lengths):
-            token_lengths = self.pad_sequences(token_lengths, 1)
-            output['token_lengths'] = token_lengths
 
         return output

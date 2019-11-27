@@ -16,14 +16,10 @@ from torch.utils.data import DataLoader
 from pytorch_transformers import WarmupLinearSchedule
 
 from protein_models import ProteinModel
-# import tape_pytorch.utils as utils
-# import tape_pytorch.errors as errors
-# import tape_pytorch.models as models
-# import tape_pytorch.visualization as visualization
-import utils
-import errors
-import models
-import visualization
+from . import utils
+from . import errors
+from . import models
+from . import visualization
 from .registry import registry
 
 try:
