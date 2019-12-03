@@ -507,7 +507,7 @@ def run_train(model_type: str,
         for epoch_id in range(start_epoch, num_train_epochs):
             run_train_epoch(epoch_id, train_loader, runner,
                             viz, num_log_iter, gradient_accumulation_steps)
-            if eval_freq > 0 and epoch_id % eval_freq == 0:
+            if eval_freq > 0 and (epoch_id + 1) % eval_freq == 0:
                 val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -519,10 +519,8 @@ def run_train(model_type: str,
             if do_save(epoch_id, num_evals_no_improvement):
                 logger.info("** ** * Saving trained model ** ** * ")
                 # Only save the model itself
-                output_model_dir = save_path / f"pytorch_model_{epoch_id}"
-                output_model_dir.mkdir()
-                runner.save_state(output_model_dir, epoch_id)
-                logger.info(f"Saving model checkpoint to {output_model_dir}")
+                runner.save_state(save_path, epoch_id)
+                logger.info(f"Saving model checkpoint to {save_path}")
 
             utils.barrier_if_distributed()
             if patience > 0 and num_evals_no_improvement >= patience:
