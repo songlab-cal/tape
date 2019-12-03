@@ -1,3 +1,24 @@
+"""Example of how to add a model in tape_pytorch.
+
+This file shows an example of how to add a new model to the tape_pytorch training
+pipeline. tape_pytorch models follow the huggingface API and so require:
+
+    - A config class
+    - An abstract model class
+    - A model class to output sequence and pooled embeddings
+    - Task-specific classes for each individual task
+
+This will walkthrough how to create each of these, with a task-specific class for
+secondary structure prediction. You can look at the other task-specific classes
+defined in e.g. tape_pytorch/models/modeling_bert.py for examples on how to
+define these other task-specific models for e.g. contact prediction or fluorescence
+prediction.
+
+In addition to defining these models, this shows how to register the model to
+tape_pytorch so that you can use the same training machinery to run your tasks.
+"""
+
+
 import torch
 import torch.nn as nn
 from tape_pytorch import ProteinModel, ProteinConfig
@@ -148,5 +169,12 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
 
 
 if __name__ == '__main__':
+    """ To actually run the model, you can do one of two things. You can
+    simply import the appropriate run function from tape_pytorch.main. The
+    possible functions are `run_train`, `run_train_distributed`, `run_eval`,
+    and `run_embed`. Alternatively, you can simply place this file inside
+    the `tape_pytorch/models` directory, where it will be auto-imported
+    into tape_pytorch.
+    """
     from tape_pytorch.main import run_train
     run_train()
