@@ -420,8 +420,7 @@ class SecondaryStructureDataset(TAPEDataset):
                  data_path: Union[str, Path],
                  mode: str,
                  tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
-                 in_memory: bool = False,
-                 num_classes: int = 3):
+                 in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
             raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
@@ -430,16 +429,13 @@ class SecondaryStructureDataset(TAPEDataset):
 
         data_path = Path(data_path)
         data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
-        super().__init__(
-            data_path, data_file, tokenizer, in_memory)
-
-        self._num_classes = num_classes
+        super().__init__(data_path, data_file, tokenizer, in_memory)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
 
         # pad with -1s because of cls/sep tokens
-        labels = np.asarray(item[f'ss{self._num_classes}'], np.int64)
+        labels = np.asarray(item['ss3'], np.int64)
         labels = np.pad(labels, (1, 1), 'constant', constant_values=-1)
 
         return token_ids, input_mask, labels
