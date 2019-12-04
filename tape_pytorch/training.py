@@ -483,11 +483,13 @@ def run_train(model_type: str,
     if save_freq == 'improvement' and eval_freq <= 0:
         raise ValueError("Cannot set save_freq to 'improvement' and eval_freq < 0")
 
+    num_trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Batch size = %d", batch_size)
     logger.info("  Num epochs = %d", num_train_epochs)
     logger.info("  Num train steps = %d", num_train_optimization_steps)
+    logger.info("  Num parameters = %d", num_trainable_parameters)
 
     best_val_loss = float('inf')
     num_evals_no_improvement = 0
