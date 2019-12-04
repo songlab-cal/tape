@@ -265,10 +265,10 @@ class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
         outputs = (amino_acid_class_scores,) + outputs[2:]
 
         if targets is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-2)
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
             classification_loss = loss_fct(
                 amino_acid_class_scores.view(-1, self.config.num_labels),
-                targets.view(-1) - 1)
+                targets.view(-1))
             outputs = (classification_loss,) + outputs
 
         # (loss), prediction_scores, seq_relationship_score, (hidden_states)

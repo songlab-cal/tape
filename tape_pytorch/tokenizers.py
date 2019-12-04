@@ -14,22 +14,17 @@ class TAPETokenizer(ABC):
     Abstract Tokenizer Class
     """
 
-    def __init__(self,
-                 unk_token: str = "<unk>",
-                 sep_token: str = "<sep>",
-                 pad_token: str = "<pad>",
-                 cls_token: str = "<cls>",
-                 mask_token: str = "<mask>"):
-
-        self.unk_token = unk_token
-        self.sep_token = sep_token
-        self.pad_token = pad_token
-        self.cls_token = cls_token
-        self.mask_token = mask_token
-
     @abstractproperty
     def vocab_size(self) -> int:
         return NotImplemented
+
+    @abstractproperty
+    def start_token(self) -> str:
+        pass
+
+    @abstractproperty
+    def stop_token(self) -> str:
+        pass
 
     @abstractmethod
     def tokenize(self, text: str) -> List[str]:
@@ -57,19 +52,12 @@ class TAPETokenizer(ABC):
         return NotImplemented
 
     @abstractmethod
-    def add_special_tokens_single_sentence(self, token_ids: List[int]) -> List[int]:
+    def add_special_tokens(self, token_ids: List[int]) -> List[int]:
         """
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
         """
         return NotImplemented
-
-    def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
-        """
-        Adds special tokens to a sequence pair for sequence classification tasks.
-        A BERT sequence pair has the following format: [CLS] A [SEP] B [SEP]
-        """
-        raise NotImplementedError("Can't do this for Pfam")
 
     @classmethod
     def from_pretrained(cls, **kwargs):
@@ -87,6 +75,14 @@ class AminoAcidTokenizer(TAPETokenizer):
               "K", "L", "M", "N", "O", "P", "Q", "R", "S",
               "T", "U", "V", "W", "X", "Y", "Z"]
     VOCAB = {token: i for i, token in enumerate(TOKENS)}
+
+    @property
+    def start_token(self) -> str:
+        return "<cls>"
+
+    @property
+    def stop_token(self) -> str:
+        return "<sep>"
 
     @property
     def vocab_size(self) -> int:
@@ -113,7 +109,7 @@ class AminoAcidTokenizer(TAPETokenizer):
         """ Converts a sequence of tokens (string) in a single string. """
         return ''.join(tokens)
 
-    def add_special_tokens_single_sentence(self, token_ids: List[int]) -> List[int]:
+    def add_special_tokens(self, token_ids: List[int]) -> List[int]:
         """
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
@@ -121,13 +117,6 @@ class AminoAcidTokenizer(TAPETokenizer):
         cls_token = [self.convert_token_to_id(self.cls_token)]
         sep_token = [self.convert_token_to_id(self.sep_token)]
         return cls_token + token_ids + sep_token
-
-    def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
-        """
-        Adds special tokens to a sequence pair for sequence classification tasks.
-        A BERT sequence pair has the following format: [CLS] A [SEP] B [SEP]
-        """
-        raise NotImplementedError("Can't do this for Pfam")
 
     @classmethod
     def from_pretrained(cls, **kwargs):
@@ -148,8 +137,13 @@ class UniRepTokenizer(TAPETokenizer):
 
     TOKENS = list(VOCAB.keys())
 
-    def __init__(self):
-        super().__init__()
+    @property
+    def start_token(self) -> str:
+        return "start"
+
+    @property
+    def stop_token(self) -> str:
+        return "stop"
 
     @property
     def vocab_size(self) -> int:
@@ -176,23 +170,16 @@ class UniRepTokenizer(TAPETokenizer):
         """ Converts a sequence of tokens (string) in a single string. """
         return ''.join(tokens)
 
-    def add_special_tokens(self, token_ids: List[str]) -> List[str]:
+    def add_special_tokens(self, token_ids: List[int]) -> List[int]:
         """
         Adds special tokens to the a sequence for sequence classification tasks.
         """
-        return [self.start_token] + token_ids + [self.stop_token]
+        return [self.convert_token_to_id(self.start_token)] + token_ids + \
+            [self.convert_token_to_id(self.stop_token)]
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
         return cls()
-
-    @property
-    def start_token(self) -> str:
-        return "start"
-
-    @property
-    def stop_token(self) -> str:
-        return "stop"
 
 
 @registry.register_tokenizer('bpe')
@@ -290,7 +277,7 @@ class BPETokenizer(TAPETokenizer):
         """ Converts a sequence of tokens (string) in a single string. """
         return self.sp.decode_pieces(tokens)
 
-    def add_special_tokens_single_sentence(self, token_ids: List[int]) -> List[int]:
+    def add_special_tokens(self, token_ids: List[int]) -> List[int]:
         """
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
@@ -298,13 +285,6 @@ class BPETokenizer(TAPETokenizer):
 
         return [self.convert_token_to_id(self.cls_token)] + token_ids + \
             [self.convert_token_to_id(self.sep_token)]
-
-    def add_special_tokens_sentences_pair(self, token_ids_0, token_ids_1):
-        """
-        Adds special tokens to a sequence pair for sequence classification tasks.
-        A BERT sequence pair has the following format: [CLS] A [SEP] B [SEP]
-        """
-        raise NotImplementedError("Can't do this for Pfam")
 
     @classmethod
     def from_pretrained(cls, model_file: Optional[Union[str, Path]] = None, **kwargs):
@@ -316,6 +296,8 @@ class BPETokenizer(TAPETokenizer):
 def get(name: str) -> Type[TAPETokenizer]:
     if name == 'amino_acid':
         return AminoAcidTokenizer
+    elif name == 'unirep':
+        return UniRepTokenizer
     elif name == 'bpe':
         return BPETokenizer
     else:

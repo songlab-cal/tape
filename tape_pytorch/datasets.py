@@ -160,7 +160,7 @@ class TAPEDataset(Dataset):
     def __getitem__(self, index: int) -> Tuple[Any, ...]:
         item = self._dataset[index]
         tokens = self.tokenizer.tokenize(item['primary'])
-        tokens = [self.tokenizer.cls_token] + tokens + [self.tokenizer.sep_token]
+        tokens = [self.tokenizer.start_token] + tokens + [self.tokenizer.stop_token]
 
         if self._convert_tokens_to_ids:
             tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
@@ -244,8 +244,8 @@ class PfamDataset(TAPEDataset):
         labels = np.zeros([len(tokens)], np.int64) - 1
 
         for i, token in enumerate(tokens):
-            # Tokens begin and end with cls_token and sep_token, ignore these
-            if token in (self.tokenizer.cls_token, self.tokenizer.sep_token):
+            # Tokens begin and end with start_token and stop_token, ignore these
+            if token in (self.tokenizer.start_token, self.tokenizer.stop_token):
                 pass
 
             prob = random.random()
