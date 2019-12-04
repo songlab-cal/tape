@@ -3,6 +3,7 @@ logs/
 results/
 pretrained_models/
 wandb/
+scratch/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
