@@ -43,11 +43,12 @@ class ProteinLSTMLayer(nn.Module):
 
     def __init__(self, input_size: int, hidden_size: int, dropout: float = 0.):
         super().__init__()
-        self.lstm = nn.Sequential(
-            nn.Dropout(dropout),
-            nn.LSTM(input_size, hidden_size, batch_first=True))
+        self.dropout = nn.Dropout(dropout)
+        self.lstm = nn.LSTM(input_size, hidden_size, batch_first=True)
 
     def forward(self, inputs):
+        inputs = self.dropout(inputs)
+        self.lstm.flatten_parameters()
         return self.lstm(inputs)
 
 
