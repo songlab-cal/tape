@@ -188,8 +188,7 @@ class TAPEDataset(Dataset):
         return array
 
 
-@registry.register_task('language_modeling')  # language modeling
-@registry.register_task('masked_language_modeling')  # masked language modeling
+@registry.register_task('language_modeling')
 class PfamDataset(TAPEDataset):
     """Creates the Pfam Dataset
     Args:
@@ -297,6 +296,7 @@ class FluorescenceDataset(TAPEDataset):
         input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
         input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
         fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)  # type: ignore
+        fluorescence_true_value = fluorescence_true_value.unsqueeze(1)
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -330,6 +330,7 @@ class StabilityDataset(TAPEDataset):
         input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
         input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
         stability_true_value = torch.FloatTensor(stability_true_value)  # type: ignore
+        stability_true_value = stability_true_value.unsqueeze(1)
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
