@@ -25,7 +25,7 @@ class UniRepConfig(ProteinConfig):
     pretrained_config_archive_map = UNIREP_PRETRAINED_CONFIG_ARCHIVE_MAP
 
     def __init__(self,
-                 vocab_size_or_config_json_file: int = 26,
+                 vocab_size: int = 26,
                  input_size: int = 10,
                  hidden_size: int = 1900,
                  hidden_dropout_prob: float = 0.1,
@@ -33,7 +33,7 @@ class UniRepConfig(ProteinConfig):
                  initializer_range: float = 0.02,
                  **kwargs):
         super().__init__(**kwargs)
-        self.vocab_size = vocab_size_or_config_json_file
+        self.vocab_size = vocab_size
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.hidden_dropout_prob = hidden_dropout_prob

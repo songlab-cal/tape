@@ -221,7 +221,7 @@ class ProteinResNetModel(ProteinResNetAbstractModel):
         return outputs  # sequence_output, pooled_output, (hidden_states)
 
 
-@registry.register_task_model('masked_language_modeling', 'resnet')
+@registry.register_task_model('language_modeling', 'resnet')
 class ProteinResNetForMaskedLM(ProteinResNetAbstractModel):
 
     def __init__(self, config):

@@ -452,7 +452,7 @@ class ProteinBertModel(ProteinBertAbstractModel):
         return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
 
 
-@registry.register_task_model('masked_language_modeling', 'transformer')
+@registry.register_task_model('language_modeling', 'transformer')
 class ProteinBertForMaskedLM(ProteinBertAbstractModel):
 
     def __init__(self, config):
