@@ -299,6 +299,6 @@ class ProteinLSTMForContactPrediction(ProteinLSTMAbstractModel):
         outputs = self.lstm(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        outputs = self.predict(sequence_output, targets) + outputs[2:]
         # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
