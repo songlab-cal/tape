@@ -210,7 +210,7 @@ class PfamDataset(TAPEDataset):
         data_file = f'pfam/pfam_{mode}.lmdb'
 
         super().__init__(
-            data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
+            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
 
     def __getitem__(self, index):
         item, tokens, input_mask = super().__getitem__(index)
@@ -282,7 +282,8 @@ class FluorescenceDataset(TAPEDataset):
         data_path = Path(data_path)
         data_file = f'fluorescence/fluorescence_{mode}.lmdb'
 
-        super().__init__(data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        super().__init__(
+            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
@@ -316,7 +317,8 @@ class StabilityDataset(TAPEDataset):
         data_path = Path(data_path)
         data_file = f'stability/stability_{mode}.lmdb'
 
-        super().__init__(data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        super().__init__(
+            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
@@ -352,7 +354,8 @@ class RemoteHomologyDataset(TAPEDataset):
         data_path = Path(data_path)
         data_file = f'remote_homology/remote_homology_{mode}.lmdb'
 
-        super().__init__(data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        super().__init__(
+            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
@@ -385,7 +388,8 @@ class ProteinnetDataset(TAPEDataset):
         data_path = Path(data_path)
         data_file = f'proteinnet/proteinnet_{mode}.lmdb'
         self._mode = mode
-        super().__init__(data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        super().__init__(
+            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
@@ -427,7 +431,8 @@ class SecondaryStructureDataset(TAPEDataset):
 
         data_path = Path(data_path)
         data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
-        super().__init__(data_file, tokenizer, in_memory)
+        super().__init__(
+            data_path / data_file, tokenizer, in_memory)
 
     def __getitem__(self, index: int):
         item, token_ids, input_mask = super().__getitem__(index)
