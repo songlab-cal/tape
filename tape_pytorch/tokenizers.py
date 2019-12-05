@@ -26,6 +26,10 @@ class TAPETokenizer(ABC):
     def stop_token(self) -> str:
         pass
 
+    @abstractproperty
+    def mask_token(self) -> str:
+        pass
+
     @abstractmethod
     def tokenize(self, text: str) -> List[str]:
         return NotImplemented
@@ -85,6 +89,10 @@ class AminoAcidTokenizer(TAPETokenizer):
         return "<sep>"
 
     @property
+    def mask_token(self) -> str:
+        return "<mask>"
+
+    @property
     def vocab_size(self) -> int:
         return len(self.TOKENS)
 
@@ -114,8 +122,8 @@ class AminoAcidTokenizer(TAPETokenizer):
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
         """
-        cls_token = [self.convert_token_to_id(self.cls_token)]
-        sep_token = [self.convert_token_to_id(self.sep_token)]
+        cls_token = [self.convert_token_to_id(self.start_token)]
+        sep_token = [self.convert_token_to_id(self.stop_token)]
         return cls_token + token_ids + sep_token
 
     @classmethod
@@ -144,6 +152,10 @@ class UniRepTokenizer(TAPETokenizer):
     @property
     def stop_token(self) -> str:
         return "stop"
+
+    @property
+    def mask_token(self) -> str:
+        raise NotImplementedError
 
     @property
     def vocab_size(self) -> int:
