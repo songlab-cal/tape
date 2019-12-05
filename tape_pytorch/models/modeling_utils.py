@@ -735,7 +735,8 @@ class MLMHead(nn.Module):
                  hidden_size: int,
                  vocab_size: int,
                  hidden_act: typing.Union[str, typing.Callable] = 'gelu',
-                 layer_norm_eps: float = 1e-12):
+                 layer_norm_eps: float = 1e-12,
+                 ignore_index: int = -100):
         super().__init__()
         self.transform = PredictionHeadTransform(hidden_size, hidden_act, layer_norm_eps)
 
@@ -744,11 +745,18 @@ class MLMHead(nn.Module):
         self.decoder = nn.Linear(hidden_size, vocab_size, bias=False)
         self.bias = nn.Parameter(data=torch.zeros(vocab_size))  # type: ignore
         self.vocab_size = vocab_size
+        self._ignore_index = ignore_index
 
-    def forward(self, hidden_states, masked_targets=None):
+    def forward(self, hidden_states, targets=None):
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states) + self.bias
-        return hidden_states
+        outputs = (hidden_states,)
+        if targets is not None:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
+            masked_lm_loss = loss_fct(
+                hidden_states.view(-1, self.vocab_size), targets.view(-1))
+            outputs = (masked_lm_loss,) + outputs
+        return outputs  # (loss), prediction_scores
 
 
 class ValuePredictionHead(nn.Module):
@@ -756,9 +764,15 @@ class ValuePredictionHead(nn.Module):
         super().__init__()
         self.value_prediction = SimpleMLP(hidden_size, 512, 1, dropout)
 
-    def forward(self, pooled_output):
+    def forward(self, pooled_output, targets=None):
         value_pred = self.value_prediction(pooled_output)
-        return value_pred
+        outputs = (value_pred,)
+
+        if targets is not None:
+            loss_fct = nn.MSELoss()
+            value_pred_loss = loss_fct(value_pred, targets)
+            outputs = (value_pred_loss,) + outputs
+        return outputs  # (loss), value_prediction
 
 
 class SequenceClassificationHead(nn.Module):
@@ -766,33 +780,60 @@ class SequenceClassificationHead(nn.Module):
         super().__init__()
         self.classify = SimpleMLP(hidden_size, 512, num_labels)
 
-    def forward(self, pooled_output):
+    def forward(self, pooled_output, targets=None):
         logits = self.classify(pooled_output)
-        return logits
+        outputs = (logits,)
+
+        if targets is not None:
+            loss_fct = nn.CrossEntropyLoss()
+            classification_loss = loss_fct(logits, targets)
+            outputs = (classification_loss,) + outputs
+
+        return outputs  # (loss), logits
 
 
 class SequenceToSequenceClassificationHead(nn.Module):
 
-    def __init__(self, hidden_size: int, num_labels: int):
+    def __init__(self,
+                 hidden_size: int,
+                 num_labels: int,
+                 ignore_index: int = -100):
         super().__init__()
         self.classify = SimpleConv(
             hidden_size, 512, num_labels)
+        self.num_labels = num_labels
+        self._ignore_index = ignore_index
 
-    def forward(self, sequence_output):
+    def forward(self, sequence_output, targets=None):
         sequence_logits = self.classify(sequence_output)
-        return sequence_logits
+        outputs = (sequence_logits,)
+        if targets is not None:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
+            classification_loss = loss_fct(
+                sequence_logits.view(-1, self.num_labels), targets.view(-1))
+            outputs = (classification_loss,) + outputs
+        return outputs  # (loss), sequence_logits
 
 
 class PairwiseContactPredictionHead(nn.Module):
 
-    def __init__(self, hidden_size: int):
+    def __init__(self, hidden_size: int, ignore_index=-100):
         super().__init__()
         self.predict = nn.Sequential(nn.Dropout(), nn.Conv2d(hidden_size, 2, 1))
+        self._ignore_index = ignore_index
 
-    def forward(self, inputs):
+    def forward(self, inputs, targets=None):
         prod = inputs[:, :, None, :] * inputs[:, None, :, :]
         diff = inputs[:, :, None, :] - inputs[:, None, :, :]
         pairwise_features = torch.cat((prod, diff), -1)
         prediction = self.predict(pairwise_features)
         prediction = (prediction + prediction.transpose(2, 3)) / 2
-        return prediction
+        outputs = (prediction,)
+
+        if targets is not None:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
+            contact_loss = loss_fct(
+                prediction.view(-1, 2), targets.view(-1), ignore_index=self._ignore_index)
+            outputs = (contact_loss,) + outputs
+
+        return outputs
