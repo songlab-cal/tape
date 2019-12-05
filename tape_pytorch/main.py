@@ -1,20 +1,10 @@
 import typing
-import sys
 import os
 import logging
-from pathlib import Path
-import json
-import itertools
-from tqdm import tqdm
 import argparse
 import warnings
-import pickle as pkl
 import inspect
 
-import torch
-import torch.nn as nn
-
-import tape_pytorch.models as models
 
 try:
     import apex  # noqa: F401
@@ -236,7 +226,7 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         raise RuntimeError(f"Missing arguments: {missing}")
     embed_args = {name: arg_dict[name] for name in arg_names}
 
-    embed_outputs = training.run_embed(**embed_args)
+    training.run_embed(**embed_args)
 
 
 def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
@@ -255,59 +245,6 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
     utils.launch_process_group(
         run_train, args, args.nproc_per_node, args.nnodes,
         args.node_rank, args.master_addr, args.master_port)
-
-
-def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
-    import random
-    from copy import copy
-
-    if env is not None:
-        os.environ = env
-
-    if args is None:
-        parser = argparse.ArgumentParser()
-        parser.add_argument('config_file', type=argparse.FileType('r'))
-        gridsearch_args = parser.parse_args()
-        config = json.load(gridsearch_args.config_file)
-        gridsearch_args.config_file.close()
-
-        fixed_values = {}
-        grid_values = {}
-
-        for key, value in config.items():
-            if isinstance(value, list) and key != 'metrics':
-                grid_values[key] = value
-            else:
-                fixed_values[key] = value
-
-        args = argparse.Namespace(**fixed_values)
-
-    args.log_level = 'WARN'
-    args.exp_name = 'gridsearch' + "_{:0>6d}".format(random.randint(0, int(1e6)))
-    args.save_callback = []
-
-    gridsearch_logger = logging.getLogger('gridsearch')
-    gridsearch_logger.setLevel(logging.INFO)
-    gridsearch_handler = logging.StreamHandler(sys.stdout)
-    gridsearch_handler.setLevel(logging.INFO)
-    gridsearch_formatter = logging.Formatter(
-        "%(levelname)s - %(name)s -    %(message)s",
-        datefmt="%y/%m/%d %H:%M:%S")
-    gridsearch_handler.setFormatter(gridsearch_formatter)
-    gridsearch_logger.addHandler(gridsearch_handler)
-
-    def unroll(key, values):
-        return ((key, value) for value in values)
-    grid_search_args = list(itertools.product(*itertools.starmap(unroll, grid_values.items())))
-    for i, grid_args in enumerate(grid_search_args):
-        run_args = copy(args)
-        run_args.exp_name += f'_{i}'
-        for key, arg in grid_args:
-            setattr(run_args, key, arg)
-        gridsearch_logger.info(
-            f"Running gridsearch {i} / {len(grid_search_args)} with args {grid_args}")
-        run_train_distributed(run_args)
-        args.master_addr += 1
 
 
 if __name__ == '__main__':
