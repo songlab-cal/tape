@@ -100,7 +100,7 @@ class Registry:
             if models is None:
                 models = {}
             task_spec = TAPETaskSpec(task_name, dataset, num_labels, models)
-            return cls.register_task_spec(task_name, task_spec)
+            return cls.register_task_spec(task_name, task_spec).dataset
         else:
             return lambda dataset: cls.register_task(task_name, num_labels, dataset, models)
 
