@@ -828,6 +828,7 @@ class PairwiseContactPredictionHead(nn.Module):
         pairwise_features = torch.cat((prod, diff), -1)
         prediction = self.predict(pairwise_features)
         prediction = (prediction + prediction.transpose(2, 3)) / 2
+        prediction = prediction[:, 1:-1, 1:-1].contiguous()  # remove start/stop tokens
         outputs = (prediction,)
 
         if targets is not None:

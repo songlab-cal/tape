@@ -9,6 +9,7 @@ from .modeling_utils import ProteinModel
 from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
+from .modeling_utils import PairwiseContactPredictionHead
 from ..registry import registry
 
 logger = logging.getLogger(__name__)
@@ -279,4 +280,25 @@ class ProteinLSTMForSequenceToSequenceClassification(ProteinLSTMAbstractModel):
             outputs = (classification_loss,) + outputs
 
         # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        return outputs
+
+
+@registry.register_task_model('contact_prediction', 'lstm')
+class ProteinLSTMForContactPrediction(ProteinLSTMAbstractModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.lstm = ProteinLSTMModel(config)
+        self.predict = PairwiseContactPredictionHead(config.hidden_size, ignore_index=-1)
+
+        self.init_weights()
+
+    def forward(self, input_ids, input_mask=None, targets=None):
+
+        outputs = self.lstm(input_ids, input_mask=input_mask)
+
+        sequence_output, pooled_output = outputs[:2]
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs

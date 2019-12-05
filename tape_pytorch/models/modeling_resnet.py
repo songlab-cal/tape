@@ -11,6 +11,7 @@ from .modeling_utils import LayerNorm
 from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
+from .modeling_utils import PairwiseContactPredictionHead
 from ..registry import registry
 
 logger = logging.getLogger(__name__)
@@ -319,6 +320,27 @@ class ProteinResNetForSequenceToSequenceClassification(ProteinResNetAbstractMode
         self.resnet = ProteinResNetModel(config)
         self.classify = SequenceToSequenceClassificationHead(
             config.hidden_size, config.num_labels, ignore_index=-1)
+
+        self.init_weights()
+
+    def forward(self, input_ids, input_mask=None, targets=None):
+
+        outputs = self.resnet(input_ids, input_mask=input_mask)
+
+        sequence_output, pooled_output = outputs[:2]
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
+        return outputs
+
+
+@registry.register_task_model('contact_prediction', 'resnet')
+class ProteinResNetForContactPrediction(ProteinResNetAbstractModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.resnet = ProteinResNetModel(config)
+        self.predict = PairwiseContactPredictionHead(config.hidden_size, ignore_index=-1)
 
         self.init_weights()
 

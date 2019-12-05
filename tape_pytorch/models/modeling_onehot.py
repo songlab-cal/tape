@@ -9,12 +9,13 @@ from .modeling_utils import ProteinModel
 from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
+from .modeling_utils import PairwiseContactPredictionHead
 from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
 
-class OneHotConfig(ProteinConfig):
+class ProteinOneHotConfig(ProteinConfig):
     pretrained_config_archive_map: typing.Dict[str, str] = {}
 
     def __init__(self,
@@ -28,9 +29,9 @@ class OneHotConfig(ProteinConfig):
         self.initializer_range = initializer_range
 
 
-class OneHotAbstractModel(ProteinModel):
+class ProteinOneHotAbstractModel(ProteinModel):
 
-    config_class = OneHotConfig
+    config_class = ProteinOneHotConfig
     pretrained_model_archive_map: typing.Dict[str, str] = {}
     base_model_prefix = "onehot"
 
@@ -42,9 +43,9 @@ class OneHotAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
-class OneHotModel(OneHotAbstractModel):
+class ProteinOneHotModel(ProteinOneHotAbstractModel):
 
-    def __init__(self, config: OneHotConfig):
+    def __init__(self, config: ProteinOneHotConfig):
         super().__init__(config)
         self.vocab_size = config.vocab_size
 
@@ -70,12 +71,12 @@ class OneHotModel(OneHotAbstractModel):
 
 @registry.register_task_model('fluorescence', 'onehot')
 @registry.register_task_model('stability', 'onehot')
-class OneHotForValuePrediction(OneHotAbstractModel):
+class ProteinOneHotForValuePrediction(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
         super().__init__(config)
 
-        self.onehot = OneHotModel(config)
+        self.onehot = ProteinOneHotModel(config)
         self.predict = ValuePredictionHead(config.vocab_size)
 
         self.init_weights()
@@ -91,12 +92,12 @@ class OneHotForValuePrediction(OneHotAbstractModel):
 
 
 @registry.register_task_model('remote_homology', 'onehot')
-class OneHotForSequenceClassification(OneHotAbstractModel):
+class ProteinOneHotForSequenceClassification(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
         super().__init__(config)
 
-        self.onehot = OneHotModel(config)
+        self.onehot = ProteinOneHotModel(config)
         self.classify = SequenceClassificationHead(config.vocab_size, config.num_labels)
 
         self.init_weights()
@@ -112,12 +113,12 @@ class OneHotForSequenceClassification(OneHotAbstractModel):
 
 
 @registry.register_task_model('secondary_structure', 'onehot')
-class OneHotForSequenceToSequenceClassification(OneHotAbstractModel):
+class ProteinOneHotForSequenceToSequenceClassification(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
         super().__init__(config)
 
-        self.onehot = OneHotModel(config)
+        self.onehot = ProteinOneHotModel(config)
         self.classify = SequenceToSequenceClassificationHead(
             config.vocab_size, config.num_labels, ignore_index=-1)
 
@@ -130,4 +131,25 @@ class OneHotForSequenceToSequenceClassification(OneHotAbstractModel):
         sequence_output, pooled_output = outputs[:2]
         outputs = self.classify(sequence_output, targets) + outputs[2:]
         # (loss), prediction_scores, (hidden_states)
+        return outputs
+
+
+@registry.register_task_model('contact_prediction', 'onehot')
+class ProteinOneHotForContactPrediction(ProteinOneHotAbstractModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.onehot = ProteinOneHotModel(config)
+        self.predict = PairwiseContactPredictionHead(config.hidden_size, ignore_index=-1)
+
+        self.init_weights()
+
+    def forward(self, input_ids, input_mask=None, targets=None):
+
+        outputs = self.onehot(input_ids, input_mask=input_mask)
+
+        sequence_output, pooled_output = outputs[:2]
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs

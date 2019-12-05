@@ -9,6 +9,7 @@ from .modeling_utils import ProteinModel
 from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
+from .modeling_utils import PairwiseContactPredictionHead
 from ..registry import registry
 
 logger = logging.getLogger(__name__)
@@ -245,4 +246,25 @@ class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
         sequence_output, pooled_output = outputs[:2]
         outputs = self.classify(sequence_output, targets) + outputs[2:]
         # (loss), prediction_scores, (hidden_states)
+        return outputs
+
+
+@registry.register_task_model('contact_prediction', 'unirep')
+class UniRepForContactPrediction(UniRepAbstractModel):
+
+    def __init__(self, config):
+        super().__init__(config)
+
+        self.unirep = UniRepModel(config)
+        self.predict = PairwiseContactPredictionHead(config.hidden_size, ignore_index=-1)
+
+        self.init_weights()
+
+    def forward(self, input_ids, input_mask=None, targets=None):
+
+        outputs = self.unirep(input_ids, input_mask=input_mask)
+
+        sequence_output, pooled_output = outputs[:2]
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
