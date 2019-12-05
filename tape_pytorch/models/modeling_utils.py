@@ -781,3 +781,18 @@ class SequenceToSequenceClassificationHead(nn.Module):
     def forward(self, sequence_output):
         sequence_logits = self.classify(sequence_output)
         return sequence_logits
+
+
+class PairwiseContactPredictionHead(nn.Module):
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.predict = nn.Sequential(nn.Dropout(), nn.Conv2d(hidden_size, 2, 1))
+
+    def forward(self, inputs):
+        prod = inputs[:, :, None, :] * inputs[:, None, :, :]
+        diff = inputs[:, :, None, :] - inputs[:, None, :, :]
+        pairwise_features = torch.cat((prod, diff), -1)
+        prediction = self.predict(pairwise_features)
+        prediction = (prediction + prediction.transpose(2, 3)) / 2
+        return prediction
