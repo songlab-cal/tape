@@ -146,6 +146,7 @@ class UniRepModel(UniRepAbstractModel):
 
 @registry.register_task_model('language_modeling', 'unirep')
 class UniRepForLM(UniRepAbstractModel):
+    # TODO: Fix this for UniRep - UniRep changes the size of the targets
 
     def __init__(self, config):
         super().__init__(config)
@@ -176,7 +177,7 @@ class UniRepForLM(UniRepAbstractModel):
                 prediction_scores.view(-1, self.config.vocab_size), targets.view(-1))
             outputs = (lm_loss,) + outputs
 
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        # (loss), prediction_scores, (hidden_states)
         return outputs
 
 
@@ -197,17 +198,8 @@ class UniRepForValuePrediction(UniRepAbstractModel):
         outputs = self.unirep(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        value_prediction = self.predict(pooled_output)
-
-        # add hidden states and if they are here
-        outputs = (value_prediction,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.MSELoss()
-            value_pred_loss = loss_fct(value_prediction, targets)
-            outputs = (value_pred_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        outputs = self.predict(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states)
         return outputs
 
 
@@ -228,17 +220,8 @@ class UniRepForSequenceClassification(UniRepAbstractModel):
         outputs = self.unirep(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        class_scores = self.classify(pooled_output)
-
-        # add hidden states and if they are here
-        outputs = (class_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            classification_loss = loss_fct(class_scores, targets)
-            outputs = (classification_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        outputs = self.classify(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states)
         return outputs
 
 
@@ -250,7 +233,7 @@ class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
 
         self.unirep = UniRepModel(config)
         self.classify = SequenceToSequenceClassificationHead(
-            config.hidden_size, config.num_labels)
+            config.hidden_size, config.num_labels, ignore_index=-1)
 
         self.init_weights()
 
@@ -259,17 +242,6 @@ class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
         outputs = self.unirep(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        amino_acid_class_scores = self.classify(sequence_output)
-
-        # add hidden states and if they are here
-        outputs = (amino_acid_class_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
-            classification_loss = loss_fct(
-                amino_acid_class_scores.view(-1, self.config.num_labels),
-                targets.view(-1))
-            outputs = (classification_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states)
         return outputs

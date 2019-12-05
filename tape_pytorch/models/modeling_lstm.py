@@ -221,17 +221,8 @@ class ProteinLSTMForValuePrediction(ProteinLSTMAbstractModel):
         outputs = self.lstm(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        value_prediction = self.predict(pooled_output)
-
-        # add hidden states and if they are here
-        outputs = (value_prediction,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.MSELoss()
-            value_pred_loss = loss_fct(value_prediction, targets)
-            outputs = (value_pred_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        outputs = self.predict(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states)
         return outputs
 
 
@@ -252,17 +243,8 @@ class ProteinLSTMForSequenceClassification(ProteinLSTMAbstractModel):
         outputs = self.lstm(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        class_scores = self.classify(pooled_output)
-
-        # add hidden states and if they are here
-        outputs = (class_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            classification_loss = loss_fct(class_scores, targets)
-            outputs = (classification_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states)
+        outputs = self.classify(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states)
         return outputs
 
 
@@ -274,7 +256,7 @@ class ProteinLSTMForSequenceToSequenceClassification(ProteinLSTMAbstractModel):
 
         self.lstm = ProteinLSTMModel(config)
         self.classify = SequenceToSequenceClassificationHead(
-            config.hidden_size * 2, config.num_labels)
+            config.hidden_size * 2, config.num_labels, ignore_index=-1)
 
         self.init_weights()
 

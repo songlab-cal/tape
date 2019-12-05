@@ -460,7 +460,8 @@ class ProteinBertForMaskedLM(ProteinBertAbstractModel):
 
         self.bert = ProteinBertModel(config)
         self.mlm = MLMHead(
-            config.hidden_size, config.vocab_size, config.hidden_act, config.layer_norm_eps)
+            config.hidden_size, config.vocab_size, config.hidden_act, config.layer_norm_eps,
+            ignore_index=-1)
 
         self.init_weights()
         self.tie_weights()
@@ -480,18 +481,9 @@ class ProteinBertForMaskedLM(ProteinBertAbstractModel):
         outputs = self.bert(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        prediction_scores = self.mlm(sequence_output)
-
         # add hidden states and attention if they are here
-        outputs = (prediction_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
-            masked_lm_loss = loss_fct(
-                prediction_scores.view(-1, self.config.vocab_size), targets.view(-1))
-            outputs = (masked_lm_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
+        outputs = self.mlm(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
 
 
@@ -512,17 +504,8 @@ class ProteinBertForValuePrediction(ProteinBertAbstractModel):
         outputs = self.bert(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        value_prediction = self.predict(pooled_output)
-
-        # add hidden states and attention if they are here
-        outputs = (value_prediction,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.MSELoss()
-            value_pred_loss = loss_fct(value_prediction, targets)
-            outputs = (value_pred_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
+        outputs = self.predict(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
 
 
@@ -543,17 +526,9 @@ class ProteinBertForSequenceClassification(ProteinBertAbstractModel):
         outputs = self.bert(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        class_scores = self.classify(pooled_output)
 
-        # add hidden states and attention if they are here
-        outputs = (class_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss()
-            classification_loss = loss_fct(class_scores, targets)
-            outputs = (classification_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
+        outputs = self.classify(pooled_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
 
 
@@ -565,7 +540,7 @@ class ProteinBertForSequenceToSequenceClassification(ProteinBertAbstractModel):
 
         self.bert = ProteinBertModel(config)
         self.classify = SequenceToSequenceClassificationHead(
-            config.hidden_size, config.num_labels)
+            config.hidden_size, config.num_labels, ignore_index=-1)
 
         self.init_weights()
 
@@ -574,17 +549,6 @@ class ProteinBertForSequenceToSequenceClassification(ProteinBertAbstractModel):
         outputs = self.bert(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        amino_acid_class_scores = self.classify(sequence_output)
-
-        # add hidden states and attention if they are here
-        outputs = (amino_acid_class_scores,) + outputs[2:]
-
-        if targets is not None:
-            loss_fct = nn.CrossEntropyLoss(ignore_index=-1)
-            classification_loss = loss_fct(
-                amino_acid_class_scores.view(-1, self.config.num_labels),
-                targets.view(-1))
-            outputs = (classification_loss,) + outputs
-
-        # (loss), prediction_scores, seq_relationship_score, (hidden_states), (attentions)
+        outputs = self.classify(sequence_output, targets) + outputs[2:]
+        # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
