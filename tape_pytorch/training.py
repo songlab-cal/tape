@@ -138,6 +138,7 @@ class BackwardRunner(ForwardRunner):
         self._local_rank = local_rank
         self._overflow_buf = torch.cuda.IntTensor([0])  # type: ignore
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self._delay_accumulation = fp16 and local_rank != -1
 
         self.scheduler = WarmupLinearSchedule(
             self.optimizer, warmup_steps, num_train_optimization_steps)
@@ -186,10 +187,11 @@ class BackwardRunner(ForwardRunner):
         torch.save(optimizer_state, save_directory / 'checkpoint.bin')
 
     def backward(self, loss) -> None:
+        if not self._delay_accumulation:
+            loss = loss / self.gradient_accumulation_steps
         if self.fp16:
-            delay_overflow_check = self._local_rank != -1
             with amp.scale_loss(loss, self.optimizer,
-                                delay_overflow_check=delay_overflow_check) as scaled_loss:
+                                delay_overflow_check=self._delay_accumulation) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
