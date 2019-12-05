@@ -2,7 +2,6 @@ import typing
 import logging
 import torch
 import torch.nn as nn
-from torch.nn.utils import weight_norm
 
 from .modeling_utils import ProteinConfig
 from .modeling_utils import ProteinModel
@@ -24,8 +23,8 @@ class ProteinResNetConfig(ProteinConfig):
     pretrained_config_archive_map = RESNET_PRETRAINED_CONFIG_ARCHIVE_MAP
 
     def __init__(self,
-                 vocab_size_or_config_json_file: int = 30,
-                 hidden_size: int = 768,
+                 vocab_size: int = 30,
+                 hidden_size: int = 512,
                  num_hidden_layers: int = 30,
                  hidden_act: str = "gelu",
                  hidden_dropout_prob: float = 0.1,
@@ -33,7 +32,7 @@ class ProteinResNetConfig(ProteinConfig):
                  layer_norm_eps: float = 1e-12,
                  **kwargs):
         super().__init__(**kwargs)
-        self.vocab_size = vocab_size_or_config_json_file
+        self.vocab_size = vocab_size
         self.num_hidden_layers = num_hidden_layers
         self.hidden_size = hidden_size
         self.hidden_act = hidden_act
@@ -50,16 +49,28 @@ class MaskedConv1d(nn.Conv1d):
         return super().forward(x)
 
 
+class ProteinResNetLayerNorm(nn.Module):
+
+    def __init__(self, config):
+        super().__init__()
+        self.norm = LayerNorm(config.hidden_size)
+
+    def forward(self, x):
+        return self.norm(x.transpose(1, 2)).transpose(1, 2)
+
+
 class ProteinResNetBlock(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.conv1 = weight_norm(MaskedConv1d(
-            config.hidden_size, config.hidden_size, 3, padding=1, bias=False))
-        self.bn1 = nn.BatchNorm1d(config.hidden_size)
-        self.conv2 = weight_norm(MaskedConv1d(
-            config.hidden_size, config.hidden_size, 3, padding=1, bias=False))
-        self.bn2 = nn.BatchNorm1d(config.hidden_size)
+        self.conv1 = MaskedConv1d(
+            config.hidden_size, config.hidden_size, 3, padding=1, bias=False)
+        # self.bn1 = nn.BatchNorm1d(config.hidden_size)
+        self.bn1 = ProteinResNetLayerNorm(config)
+        self.conv2 = MaskedConv1d(
+            config.hidden_size, config.hidden_size, 3, padding=1, bias=False)
+        # self.bn2 = nn.BatchNorm1d(config.hidden_size)
+        self.bn2 = ProteinResNetLayerNorm(config)
         self.activation_fn = get_activation_fn(config.hidden_act)
 
     def forward(self, x, input_mask=None):
@@ -178,8 +189,8 @@ class ProteinResNetAbstractModel(ProteinModel):
             nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
             if module.bias is not None:
                 module.bias.data.zero_()
-        elif isinstance(module, ProteinResNetBlock):
-            nn.init.constant_(module.bn2.weight, 0)
+        # elif isinstance(module, ProteinResNetBlock):
+            # nn.init.constant_(module.bn2.weight, 0)
 
 
 class ProteinResNetModel(ProteinResNetAbstractModel):
