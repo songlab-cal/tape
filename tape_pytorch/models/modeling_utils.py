@@ -819,7 +819,8 @@ class PairwiseContactPredictionHead(nn.Module):
 
     def __init__(self, hidden_size: int, ignore_index=-100):
         super().__init__()
-        self.predict = nn.Sequential(nn.Dropout(), nn.Conv2d(hidden_size, 2, 1))
+        self.predict = nn.Sequential(
+            nn.Dropout(), nn.Linear(2 * hidden_size, 2))
         self._ignore_index = ignore_index
 
     def forward(self, inputs, targets=None):
@@ -827,14 +828,14 @@ class PairwiseContactPredictionHead(nn.Module):
         diff = inputs[:, :, None, :] - inputs[:, None, :, :]
         pairwise_features = torch.cat((prod, diff), -1)
         prediction = self.predict(pairwise_features)
-        prediction = (prediction + prediction.transpose(2, 3)) / 2
+        prediction = (prediction + prediction.transpose(1, 2)) / 2
         prediction = prediction[:, 1:-1, 1:-1].contiguous()  # remove start/stop tokens
         outputs = (prediction,)
 
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             contact_loss = loss_fct(
-                prediction.view(-1, 2), targets.view(-1), ignore_index=self._ignore_index)
+                prediction.view(-1, 2), targets.view(-1))
             outputs = (contact_loss,) + outputs
 
         return outputs
