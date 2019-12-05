@@ -118,6 +118,7 @@ class UniRepAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
+@registry.register_task_model('embed', 'unirep')
 class UniRepModel(UniRepAbstractModel):
 
     def __init__(self, config: UniRepConfig):

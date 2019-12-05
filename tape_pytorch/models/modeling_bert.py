@@ -393,6 +393,7 @@ class ProteinBertAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
+@registry.register_task_model('embed', 'transformer')
 class ProteinBertModel(ProteinBertAbstractModel):
 
     def __init__(self, config):

@@ -140,6 +140,7 @@ class ProteinLSTMAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
+@registry.register_task_model('embed', 'lstm')
 class ProteinLSTMModel(ProteinLSTMAbstractModel):
 
     def __init__(self, config: ProteinLSTMConfig):

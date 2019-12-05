@@ -20,6 +20,7 @@ from . import errors
 from . import visualization
 from .registry import registry
 from .models.modeling_utils import ProteinModel
+from .datasets import TAPEDataset
 
 try:
     from apex import amp
@@ -73,7 +74,8 @@ class ForwardRunner:
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
-                return_outputs: bool = False) -> ForwardModelOutput:
+                return_outputs: bool = False,
+                no_loss: bool = False) -> ForwardModelOutput:
         # Filter out batch items that aren't used in this model
         # Requires that dataset keys match the forward args of the model
         # Useful if some elements of the data are only used by certain models
@@ -85,6 +87,10 @@ class ForwardRunner:
                      for name, tensor in batch.items()}
 
         outputs = self.model(**batch)
+
+        if no_loss:
+            return outputs
+
         if isinstance(outputs[0], tuple):
             # model also returned metrics
             loss, metrics = outputs[0]
@@ -404,7 +410,6 @@ def run_train(model_type: str,
               save_freq: typing.Union[int, str] = 1,
               model_config_file: typing.Optional[str] = None,
               data_dir: str = './data',
-              vocab_file: str = './data/pfam.model',
               output_dir: str = './results',
               no_cuda: bool = False,
               seed: int = 42,
@@ -549,7 +554,6 @@ def run_eval(model_type: str,
              batch_size: int = 1024,
              model_config_file: typing.Optional[str] = None,
              data_dir: str = './data',
-             vocab_file: str = './data/pfam.model',
              no_cuda: bool = False,
              seed: int = 42,
              tokenizer: str = 'amino_acid',
@@ -598,3 +602,50 @@ def run_eval(model_type: str,
         pkl.dump((metrics_to_save, save_outputs), f)
 
     return metrics_to_save
+
+
+def run_embed(model_type: str,
+              data_file: str,
+              out_file: str,
+              from_pretrained: str,
+              batch_size: int = 1024,
+              model_config_file: typing.Optional[str] = None,
+              no_cuda: bool = False,
+              seed: int = 42,
+              tokenizer: str = 'amino_acid',
+              num_workers: int = 8,
+              log_level: typing.Union[str, int] = logging.INFO) -> None:
+
+    local_rank = -1  # TAPE does not support distributed evaluation
+    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+    utils.setup_logging(local_rank, save_path=None, log_level=log_level)
+    utils.set_random_seeds(seed, n_gpu)
+
+    logger.info(
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
+
+    task_spec = registry.get_task_spec('embed')
+    model = registry.get_task_model(
+        model_type, task_spec.name, model_config_file, from_pretrained)
+    runner = ForwardRunner(model, device, n_gpu)
+    runner.initialize_distributed_model()
+    runner.eval()
+    torch.set_grad_enabled(False)
+
+    dataset: TAPEDataset = task_spec.dataset(data_file, tokenizer=tokenizer)  # type: ignore
+    valid_loader = utils.setup_loader(dataset, batch_size, local_rank, n_gpu, 1, num_workers)
+
+    with utils.IncrementalNPZ(out_file) as npzfile:
+        for batch in tqdm(valid_loader, total=len(valid_loader)):
+            outputs = runner.forward(batch, no_loss=True)
+            sequence_embed = outputs[0]
+            pooled_embed = outputs[1]
+            sequence_lengths = batch['input_mask'].sum(1)
+            sequence_embed = sequence_embed.cpu().numpy()
+            pooled_embed = pooled_embed.cpu().numpy()
+            sequence_lengths = sequence_lengths.cpu().numpy()
+
+            for seqembed, poolembed, length in zip(
+                    sequence_embed, pooled_embed, sequence_lengths):
+                npzfile.savez((seqembed[:length], poolembed))

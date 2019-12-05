@@ -193,6 +193,7 @@ class ProteinResNetAbstractModel(ProteinModel):
             # nn.init.constant_(module.bn2.weight, 0)
 
 
+@registry.register_task_model('embed', 'resnet')
 class ProteinResNetModel(ProteinResNetAbstractModel):
 
     def __init__(self, config):

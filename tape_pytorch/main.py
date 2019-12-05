@@ -128,9 +128,9 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser = argparse.ArgumentParser(
         description='Embed a set of proteins wiht a pretrained model',
         parents=[base_parser])
-    parser.add_argument('datafile', type=str,
+    parser.add_argument('data_file', type=str,
                         help='File containing set of proteins to embed')
-    parser.add_argument('outfile', type=str,
+    parser.add_argument('out_file', type=str,
                         help='Name of output file')
     parser.add_argument('from_pretrained', type=str,
                         help='Directory containing config and pretrained model weights')
@@ -223,53 +223,20 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         base_parser = create_base_parser()
         parser = create_embed_parser(base_parser)
         args = parser.parse_args()
-
     if args.from_pretrained is None:
         raise ValueError("Must specify pretrained model")
     if args.local_rank != -1:
-        raise ValueError("TAPE does not support distributed embed pass")
+        raise ValueError("TAPE does not support distributed validation pass")
 
-    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    arg_dict = vars(args)
+    arg_names = inspect.getfullargspec(training.run_embed).args
 
-    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
-    utils.set_random_seeds(args.seed, n_gpu)
+    missing = set(arg_names) - set(arg_dict.keys())
+    if missing:
+        raise RuntimeError(f"Missing arguments: {missing}")
+    embed_args = {name: arg_dict[name] for name in arg_names}
 
-    logger.info(
-        f"device: {device} "
-        f"n_gpu: {n_gpu}")
-
-    model = models.get(
-        args.model_type, args.task, args.model_config_file, args.from_pretrained)
-
-    if n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
-    loader = utils.setup_loader(
-        dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
-
-    torch.set_grad_enabled(False)
-    model.eval()
-
-    save_outputs = []
-    save_callback = registry.get_callback('save_embedding')
-
-    for batch in tqdm(loader, desc='Embedding sequences', total=len(loader),
-                      disable=not is_master):
-        cuda_batch = {name: tensor.cuda(device=device, non_blocking=True)
-                      for name, tensor in batch.items()}
-        outputs = model(**cuda_batch)
-
-        to_save = save_callback(model, batch, outputs)
-        save_outputs.append(to_save)
-
-    keys = save_outputs[0].keys()
-    output_dict = {
-        key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-        for key in keys}
-
-    with (Path(args.outfile).with_suffix('.pkl')).open('wb') as f:
-        pkl.dump(output_dict, f)
+    embed_outputs = training.run_embed(**embed_args)
 
 
 def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
