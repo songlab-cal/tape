@@ -653,4 +653,5 @@ def run_embed(model_type: str,
                 if not full_sequence_embed:
                     # avgpool across the sequence
                     seqembed = seqembed.mean(0)
-                npzfile.savez(protein_id=(seqembed, poolembed))
+                to_save = {protein_id: (seqembed, poolembed)}
+                npzfile.savez(**to_save)
