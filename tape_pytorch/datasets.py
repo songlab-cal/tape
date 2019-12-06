@@ -17,6 +17,32 @@ from .registry import registry
 logger = logging.getLogger(__name__)
 
 
+def dataset_factory(data_file: Union[str, Path], *args, **kwargs) -> Dataset:
+    data_file = Path(data_file)
+    if not data_file.exists():
+        raise FileNotFoundError(data_file)
+    if data_file.suffix == '.lmdb':
+        return LMDBDataset(data_file, *args, **kwargs)
+    elif data_file.suffix == '.fasta':
+        return FastaDataset(data_file, *args, **kwargs)
+    elif data_file.suffix == '.json':
+        return JSONDataset(data_file, *args, **kwargs)
+    else:
+        raise ValueError(f"Unrecognized datafile type {data_file.suffix}")
+
+
+def pad_sequences(sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+    batch_size = len(sequences)
+    shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
+    array = np.zeros(shape, sequences[0].dtype) + constant_value
+
+    for arr, seq in zip(array, sequences):
+        arrslice = tuple(slice(dim) for dim in seq.shape)
+        arr[arrslice] = seq
+
+    return array
+
+
 class FastaDataset(Dataset):
     """Creates a dataset from a fasta file.
     Args:
@@ -131,9 +157,10 @@ class JSONDataset(Dataset):
        a dictionary.
     Args:
         data_file (Union[str, Path]): Path to json file.
+        in_memory (bool): Dummy variable to match API of other datasets
     """
 
-    def __init__(self, data_file: Union[str, Path]):
+    def __init__(self, data_file: Union[str, Path], in_memory: bool = True):
         import json
         data_file = Path(data_file)
         if not data_file.exists():
@@ -163,101 +190,76 @@ class JSONDataset(Dataset):
 
 
 @registry.register_task('embed')
-class TAPEDataset(Dataset):
+class EmbedDataset(Dataset):
 
     def __init__(self,
                  data_file: Union[str, Path],
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
         super().__init__()
 
-        data_file = Path(data_file)
-        if not data_file.exists():
-            raise FileNotFoundError(data_file)
-
         if isinstance(tokenizer, str):
             tokenizer = TAPETokenizer(vocab=tokenizer)
-
-        assert isinstance(tokenizer, TAPETokenizer)
         self.tokenizer = tokenizer
-        self._convert_tokens_to_ids = convert_tokens_to_ids
-
-        if data_file.suffix == '.lmdb':
-            self._dataset: Dataset = LMDBDataset(data_file, in_memory)
-        elif data_file.suffix == '.fasta':
-            self._dataset = FastaDataset(data_file, in_memory)
-        elif data_file.suffix == '.json':
-            self._dataset = JSONDataset(data_file)
-        else:
-            raise ValueError(f"Unrecognized dataset type: {data_file.suffix}")
+        self.data = dataset_factory(data_file)
 
     def __len__(self) -> int:
-        return len(self._dataset)
+        return len(self.data)
 
-    def __getitem__(self, index: int) -> Tuple[Any, ...]:
-        item = self._dataset[index]
-        tokens = self.tokenizer.tokenize(item['primary'])
-        tokens = [self.tokenizer.start_token] + tokens + [self.tokenizer.stop_token]
-
-        if self._convert_tokens_to_ids:
-            tokens = np.array(self.tokenizer.convert_tokens_to_ids(tokens), np.int64)
-
-        input_mask = np.ones([len(tokens)], dtype=np.int64)
-
-        return item, tokens, input_mask
+    def __getitem__(self, index: int):
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
+        return item['id'], token_ids, input_mask
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
-        items, tokens, input_mask = zip(*batch)
-        items = list(items)
-        tokens = torch.from_numpy(self.pad_sequences(tokens))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask))
-        ids = [item['id'] for item in items]
+        ids, tokens, input_mask = zip(*batch)
+        ids = list(ids)
+        tokens = torch.from_numpy(pad_sequences(tokens))
+        input_mask = torch.from_numpy(pad_sequences(input_mask))
         return {'ids': ids, 'input_ids': tokens, 'input_mask': input_mask}  # type: ignore
 
-    def pad_sequences(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
-        batch_size = len(sequences)
-        shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
-        array = np.zeros(shape, sequences[0].dtype) + constant_value
 
-        for arr, seq in zip(array, sequences):
-            arrslice = tuple(slice(dim) for dim in seq.shape)
-            arr[arrslice] = seq
-
-        return array
-
-
-@registry.register_task('language_modeling')
-class PfamDataset(TAPEDataset):
+@registry.register_task('language_splitling')
+class PfamDataset(Dataset):
     """Creates the Pfam Dataset
     Args:
         data_path (Union[str, Path]): Path to tape data root.
-        mode (str): One of ['train', 'valid', 'holdout'], specifies which data file to load.
+        split (str): One of ['train', 'valid', 'holdout'], specifies which data file to load.
         in_memory (bool, optional): Whether to load the full dataset into memory.
             Default: False.
     """
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
-
-        if mode not in ('train', 'valid', 'holdout'):
+        super().__init__()
+        if split not in ('train', 'valid', 'holdout'):
             raise ValueError(
-                f"Unrecognized mode: {mode}. "
+                f"Unrecognized split: {split}. "
                 f"Must be one of ['train', 'valid', 'holdout']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
 
         data_path = Path(data_path)
-        data_file = f'pfam/pfam_{mode}.lmdb'
+        data_file = f'pfam/pfam_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
 
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=False)
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index):
-        item, tokens, input_mask = super().__getitem__(index)
-
+        item = self.data[index]
+        tokens = self.tokenizer.tokenize(item['primary'])
+        tokens = self.tokenizer.add_special_tokens(tokens)
         masked_tokens, labels = self._apply_bert_mask(tokens)
+        masked_token_ids = np.array(
+            self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
+        input_mask = np.ones_like(masked_token_ids)
 
         masked_token_ids = np.array(
             self.tokenizer.convert_tokens_to_ids(masked_tokens), np.int64)
@@ -267,10 +269,10 @@ class PfamDataset(TAPEDataset):
     def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, lm_label_ids, clan, family = tuple(zip(*batch))
 
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         # ignore_index is -1
-        lm_label_ids = torch.from_numpy(self.pad_sequences(lm_label_ids, -1))
+        lm_label_ids = torch.from_numpy(pad_sequences(lm_label_ids, -1))
         clan = torch.LongTensor(clan)  # type: ignore
         family = torch.LongTensor(family)  # type: ignore
 
@@ -309,32 +311,38 @@ class PfamDataset(TAPEDataset):
 
 
 @registry.register_task('fluorescence')
-class FluorescenceDataset(TAPEDataset):
+class FluorescenceDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'test'):
-            raise ValueError(f"Unrecognized mode: {mode}. "
+        if split not in ('train', 'valid', 'test'):
+            raise ValueError(f"Unrecognized split: {split}. "
                              f"Must be one of ['train', 'valid', 'test']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
 
         data_path = Path(data_path)
-        data_file = f'fluorescence/fluorescence_{mode}.lmdb'
+        data_file = f'fluorescence/fluorescence_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
 
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, float(item['log_fluorescence'][0])
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fluorescence_true_value = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         fluorescence_true_value = torch.FloatTensor(fluorescence_true_value)  # type: ignore
         fluorescence_true_value = fluorescence_true_value.unsqueeze(1)
 
@@ -344,32 +352,39 @@ class FluorescenceDataset(TAPEDataset):
 
 
 @registry.register_task('stability')
-class StabilityDataset(TAPEDataset):
+class StabilityDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'test'):
-            raise ValueError(f"Unrecognized mode: {mode}. "
+        if split not in ('train', 'valid', 'test'):
+            raise ValueError(f"Unrecognized split: {split}. "
                              f"Must be one of ['train', 'valid', 'test']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
 
         data_path = Path(data_path)
-        data_file = f'stability/stability_{mode}.lmdb'
+        data_file = f'stability/stability_{split}.lmdb'
 
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        self.data = dataset_factory(data_file, in_memory)
+
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, float(item['stability_score'][0])
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, stability_true_value = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         stability_true_value = torch.FloatTensor(stability_true_value)  # type: ignore
         stability_true_value = stability_true_value.unsqueeze(1)
 
@@ -379,34 +394,40 @@ class StabilityDataset(TAPEDataset):
 
 
 @registry.register_task('remote_homology', num_labels=1195)
-class RemoteHomologyDataset(TAPEDataset):
+class RemoteHomologyDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'test_fold_holdout',
-                        'test_family_holdout', 'test_superfamily_holdout'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+        if split not in ('train', 'valid', 'test_fold_holdout',
+                         'test_family_holdout', 'test_superfamily_holdout'):
+            raise ValueError(f"Unrecognized split: {split}. Must be one of "
                              f"['train', 'valid', 'test_fold_holdout', "
                              f"'test_family_holdout', 'test_superfamily_holdout']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
 
         data_path = Path(data_path)
-        data_file = f'remote_homology/remote_homology_{mode}.lmdb'
+        data_file = f'remote_homology/remote_homology_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
 
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, item['fold_label']
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, fold_label = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         fold_label = torch.LongTensor(fold_label)  # type: ignore
 
         return {'input_ids': input_ids,
@@ -415,26 +436,33 @@ class RemoteHomologyDataset(TAPEDataset):
 
 
 @registry.register_task('contact_prediction')
-class ProteinnetDataset(TAPEDataset):
+class ProteinnetDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'train_unfiltered', 'valid', 'test'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+        if split not in ('train', 'train_unfiltered', 'valid', 'test'):
+            raise ValueError(f"Unrecognized split: {split}. Must be one of "
                              f"['train', 'train_unfiltered', 'valid', 'test']")
 
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
+
         data_path = Path(data_path)
-        data_file = f'proteinnet/proteinnet_{mode}.lmdb'
-        self._mode = mode
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory, convert_tokens_to_ids=True)
+        data_file = f'proteinnet/proteinnet_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
+
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
 
         valid_mask = item['valid_mask']
         contact_map = np.less(squareform(pdist(item['tertiary'])), 8.0).astype(np.int64)
@@ -448,9 +476,9 @@ class ProteinnetDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, contact_labels = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
-        contact_labels = torch.from_numpy(self.pad_sequences(contact_labels, -1))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
+        contact_labels = torch.from_numpy(pad_sequences(contact_labels, -1))
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
@@ -458,26 +486,33 @@ class ProteinnetDataset(TAPEDataset):
 
 
 @registry.register_task('secondary_structure', num_labels=3)
-class SecondaryStructureDataset(TAPEDataset):
+class SecondaryStructureDataset(Dataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+        if split not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
+            raise ValueError(f"Unrecognized split: {split}. Must be one of "
                              f"['train', 'valid', 'casp12', "
                              f"'ts115', 'cb513']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
 
         data_path = Path(data_path)
-        data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
-        super().__init__(
-            data_path / data_file, tokenizer, in_memory)
+        data_file = f'secondary_structure/secondary_structure_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
+
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
 
         # pad with -1s because of cls/sep tokens
         labels = np.asarray(item['ss3'], np.int64)
@@ -487,9 +522,9 @@ class SecondaryStructureDataset(TAPEDataset):
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, ss_label = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
-        ss_label = torch.from_numpy(self.pad_sequences(ss_label, -1))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
+        ss_label = torch.from_numpy(pad_sequences(ss_label, -1))
 
         output = {'input_ids': input_ids,
                   'input_mask': input_mask,

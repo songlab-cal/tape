@@ -69,7 +69,7 @@ class Registry:
         There are two ways of registering a new task. First, one can define the task by simply
         declaring all the components, and then calling the register method, like so:
 
-            class SecondaryStructureDataset(TAPEDataset):
+            class SecondaryStructureDataset(Dataset):
                 ...
 
             class ProteinBertForSequenceToSequenceClassification():
@@ -84,7 +84,7 @@ class Registry:
         decorator:
 
             @registry.regsiter_task('secondary_structure', 3)
-            class SecondaryStructureDataset(TAPEDataset):
+            class SecondaryStructureDataset(Dataset):
                 ...
 
             @registry.register_task_model('secondary_structure', 'transformer')

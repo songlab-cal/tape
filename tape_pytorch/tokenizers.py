@@ -1,6 +1,7 @@
 from typing import List
 import logging
 from collections import OrderedDict
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -153,14 +154,20 @@ class TAPETokenizer():
         """ Converts a sequence of tokens (string) in a single string. """
         return ''.join(tokens)
 
-    def add_special_tokens(self, token_ids: List[int]) -> List[int]:
+    def add_special_tokens(self, token_ids: List[str]) -> List[str]:
         """
         Adds special tokens to the a sequence for sequence classification tasks.
         A BERT sequence has the following format: [CLS] X [SEP]
         """
-        cls_token = [self.convert_token_to_id(self.start_token)]
-        sep_token = [self.convert_token_to_id(self.stop_token)]
+        cls_token = [self.start_token]
+        sep_token = [self.stop_token]
         return cls_token + token_ids + sep_token
+
+    def tokenize_and_numpy(self, text: str) -> np.ndarray:
+        tokens = self.tokenize(text)
+        tokens = self.add_special_tokens(tokens)
+        token_ids = self.convert_tokens_to_ids(tokens)
+        return np.array(token_ids, np.int64)
 
     @classmethod
     def from_pretrained(cls, **kwargs):

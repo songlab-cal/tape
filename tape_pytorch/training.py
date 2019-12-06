@@ -20,7 +20,6 @@ from . import errors
 from . import visualization
 from .registry import registry
 from .models.modeling_utils import ProteinModel
-from .datasets import TAPEDataset
 
 try:
     from apex import amp
@@ -634,7 +633,7 @@ def run_embed(model_type: str,
     runner.eval()
     torch.set_grad_enabled(False)
 
-    dataset: TAPEDataset = task_spec.dataset(data_file, tokenizer=tokenizer)  # type: ignore
+    dataset = task_spec.dataset(data_file, tokenizer=tokenizer)  # type: ignore
     valid_loader = utils.setup_loader(dataset, batch_size, local_rank, n_gpu, 1, num_workers)
 
     with utils.IncrementalNPZ(out_file) as npzfile:

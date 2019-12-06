@@ -7,13 +7,11 @@ import sys
 
 import torch
 import torch.distributed as dist
-from torch.utils.data import DataLoader, RandomSampler
+from torch.utils.data import DataLoader, RandomSampler, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from pytorch_transformers import AdamW
-from pytorch_transformers.modeling_utils import PreTrainedModel
 
 from tape_pytorch.registry import registry
-from tape_pytorch.datasets import TAPEDataset
 
 from .utils import get_effective_batch_size
 from ._sampler import BucketBatchSampler
@@ -54,7 +52,7 @@ def setup_logging(local_rank: int,
             root_logger.addHandler(file_handler)
 
 
-def setup_optimizer(model: PreTrainedModel,
+def setup_optimizer(model,
                     learning_rate: float):
     """Create the AdamW optimizer for the given model with the specified learning rate. Based on
     creation in the pytorch_transformers repository.
@@ -91,12 +89,12 @@ def setup_optimizer(model: PreTrainedModel,
 def setup_dataset(task: str,
                   data_dir: typing.Union[str, Path],
                   split: str,
-                  tokenizer: str) -> TAPEDataset:
+                  tokenizer: str) -> Dataset:
     task_spec = registry.get_task_spec(task)
     return task_spec.dataset(data_dir, split, tokenizer)  # type: ignore
 
 
-def setup_loader(dataset: TAPEDataset,
+def setup_loader(dataset: Dataset,
                  batch_size: int,
                  local_rank: int,
                  n_gpu: int,
@@ -112,7 +110,7 @@ def setup_loader(dataset: TAPEDataset,
     loader = DataLoader(
         dataset,
         num_workers=num_workers,
-        collate_fn=dataset.collate_fn,
+        collate_fn=dataset.collate_fn,  # type: ignore
         batch_sampler=batch_sampler)
 
     return loader
