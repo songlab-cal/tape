@@ -126,6 +126,10 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
+    parser.add_argument('--full_sequence_embed', action='store_true',
+                        help='If true, saves an embedding at every amino acid position '
+                             'in the sequence. Note that this can take a large amount '
+                             'of disk space.')
     parser.set_defaults(task='embed')
     return parser
 

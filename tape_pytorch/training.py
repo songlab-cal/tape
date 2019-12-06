@@ -610,6 +610,7 @@ def run_embed(model_type: str,
               from_pretrained: str,
               batch_size: int = 1024,
               model_config_file: typing.Optional[str] = None,
+              full_sequence_embed: bool = False,
               no_cuda: bool = False,
               seed: int = 42,
               tokenizer: str = 'amino_acid',
@@ -648,4 +649,7 @@ def run_embed(model_type: str,
 
             for seqembed, poolembed, length in zip(
                     sequence_embed, pooled_embed, sequence_lengths):
-                npzfile.savez((seqembed[:length], poolembed))
+                seqembed = seqembed[:length]
+                if not full_sequence_embed:
+                    seqembed = seqembed.mean(0)
+                npzfile.savez((seqembed, poolembed))
