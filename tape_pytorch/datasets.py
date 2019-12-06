@@ -11,7 +11,7 @@ import torch
 from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
-import tape_pytorch.tokenizers as tokenizers
+from .tokenizers import TAPETokenizer
 from .registry import registry
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,7 @@ class TAPEDataset(Dataset):
 
     def __init__(self,
                  data_file: Union[str, Path],
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False,
                  convert_tokens_to_ids: bool = True):
         super().__init__()
@@ -138,9 +138,9 @@ class TAPEDataset(Dataset):
             raise FileNotFoundError(data_file)
 
         if isinstance(tokenizer, str):
-            tokenizer = tokenizers.get(tokenizer)
+            tokenizer = TAPETokenizer(vocab=tokenizer)
 
-        assert isinstance(tokenizer, tokenizers.TAPETokenizer)
+        assert isinstance(tokenizer, TAPETokenizer)
         self.tokenizer = tokenizer
         self._convert_tokens_to_ids = convert_tokens_to_ids
 
@@ -198,7 +198,7 @@ class PfamDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'holdout'):
@@ -272,7 +272,7 @@ class FluorescenceDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -307,7 +307,7 @@ class StabilityDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test'):
@@ -342,7 +342,7 @@ class RemoteHomologyDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'test_fold_holdout',
@@ -378,7 +378,7 @@ class ProteinnetDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'train_unfiltered', 'valid', 'test'):
@@ -421,7 +421,7 @@ class SecondaryStructureDataset(TAPEDataset):
     def __init__(self,
                  data_path: Union[str, Path],
                  mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 tokenizer: Union[str, TAPETokenizer] = 'amino_acid',
                  in_memory: bool = False):
 
         if mode not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):

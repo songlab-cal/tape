@@ -44,7 +44,6 @@ class Registry:
     central repository for TAPE."""
 
     task_name_mapping: Dict[str, TAPETaskSpec] = {}
-    tokenizer_name_mapping: Dict[str, Type] = {}
     metric_name_mapping: Dict[str, Callable] = {}
 
     @classmethod
@@ -182,41 +181,12 @@ class Registry:
         return wrap
 
     @classmethod
-    def register_tokenizer(cls, name: str) -> Callable[[Type], Type]:
-        r"""Register a tokenizer to registry with key 'name'
-
-        Args:
-            name: Key with which the tokenizer will be registered.
-
-        Usage::
-            from tape_pytorch.registry import registry
-            from tape_pytorch.tokenizers import TAPETokenizer
-
-            @registry.register('bpe')
-            class BPETokenizer(TAPETokenizer):
-                ...
-        """
-
-        def wrap(tokenizer_cls: Type[Callable]) -> Type[Callable]:
-            from tape_pytorch.tokenizers import TAPETokenizer
-            assert issubclass(tokenizer_cls, TAPETokenizer), \
-                "All collate_fn must inherit tape_pytorch.tokenizers.TAPETokenizer"
-            cls.tokenizer_name_mapping[name] = tokenizer_cls
-            return tokenizer_cls
-
-        return wrap
-
-    @classmethod
     def get_task_spec(cls, name: str) -> TAPETaskSpec:
         return cls.task_name_mapping[name]
 
     @classmethod
     def get_metric(cls, name: str) -> Callable:
         return cls.metric_name_mapping[name]
-
-    @classmethod
-    def get_tokenizer_class(cls, name: str) -> Type:
-        return cls.tokenizer_name_mapping[name]
 
     @classmethod
     def get_task_model(cls,
