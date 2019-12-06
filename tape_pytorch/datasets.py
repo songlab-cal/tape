@@ -212,7 +212,8 @@ class TAPEDataset(Dataset):
         items = list(items)
         tokens = torch.from_numpy(self.pad_sequences(tokens))
         input_mask = torch.from_numpy(self.pad_sequences(input_mask))
-        return {'input_ids': tokens, 'input_mask': input_mask}
+        ids = [item['id'] for item in items]
+        return {'ids': ids, 'input_ids': tokens, 'input_mask': input_mask}  # type: ignore
 
     def pad_sequences(self, sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
         batch_size = len(sequences)

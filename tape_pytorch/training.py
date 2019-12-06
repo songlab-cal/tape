@@ -617,7 +617,7 @@ def run_embed(model_type: str,
               num_workers: int = 8,
               log_level: typing.Union[str, int] = logging.INFO) -> None:
 
-    local_rank = -1  # TAPE does not support distributed evaluation
+    local_rank = -1  # TAPE does not support torch.distributed.launch for embedding
     device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
     utils.setup_logging(local_rank, save_path=None, log_level=log_level)
     utils.set_random_seeds(seed, n_gpu)
@@ -640,6 +640,7 @@ def run_embed(model_type: str,
     with utils.IncrementalNPZ(out_file) as npzfile:
         for batch in tqdm(valid_loader, total=len(valid_loader)):
             outputs = runner.forward(batch, no_loss=True)
+            ids = batch['ids']
             sequence_embed = outputs[0]
             pooled_embed = outputs[1]
             sequence_lengths = batch['input_mask'].sum(1)
@@ -647,9 +648,10 @@ def run_embed(model_type: str,
             pooled_embed = pooled_embed.cpu().numpy()
             sequence_lengths = sequence_lengths.cpu().numpy()
 
-            for seqembed, poolembed, length in zip(
-                    sequence_embed, pooled_embed, sequence_lengths):
+            for seqembed, poolembed, length, protein_id in zip(
+                    sequence_embed, pooled_embed, sequence_lengths, ids):
                 seqembed = seqembed[:length]
                 if not full_sequence_embed:
+                    # avgpool across the sequence
                     seqembed = seqembed.mean(0)
-                npzfile.savez((seqembed, poolembed))
+                npzfile.savez(protein_id=(seqembed, poolembed))
