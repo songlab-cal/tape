@@ -38,8 +38,6 @@ logger = logging.getLogger(__name__)
 MetricsDict = typing.Dict[str, float]
 LossAndMetrics = typing.Tuple[float, MetricsDict]
 OutputDict = typing.Dict[str, typing.Any]
-ForwardModelOutput = typing.Union[typing.Tuple[torch.Tensor, OutputDict],
-                                  typing.Tuple[torch.Tensor, OutputDict, OutputDict]]
 
 
 class ForwardRunner:
@@ -75,7 +73,7 @@ class ForwardRunner:
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
                 return_outputs: bool = False,
-                no_loss: bool = False) -> ForwardModelOutput:
+                no_loss: bool = False):
         # Filter out batch items that aren't used in this model
         # Requires that dataset keys match the forward args of the model
         # Useful if some elements of the data are only used by certain models
