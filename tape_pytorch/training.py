@@ -414,7 +414,7 @@ def run_train(model_type: str,
               no_cuda: bool = False,
               seed: int = 42,
               local_rank: int = -1,
-              tokenizer: str = 'amino_acid',
+              tokenizer: str = 'iupac',
               num_workers: int = 8,
               debug: bool = False,
               log_level: typing.Union[str, int] = logging.INFO,
@@ -556,14 +556,14 @@ def run_eval(model_type: str,
              data_dir: str = './data',
              no_cuda: bool = False,
              seed: int = 42,
-             tokenizer: str = 'amino_acid',
+             tokenizer: str = 'iupac',
              num_workers: int = 8,
              debug: bool = False,
              # save_callback: typing.Tuple[str, ...] = (),
              metrics: typing.Tuple[str, ...] = (),
              log_level: typing.Union[str, int] = logging.INFO) -> typing.Dict[str, float]:
 
-    local_rank = -1  # TAPE does not support distributed evaluation
+    local_rank = -1  # TAPE does not support torch.distributed.launch for evaluation
     device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
     utils.setup_logging(local_rank, save_path=None, log_level=log_level)
     utils.set_random_seeds(seed, n_gpu)
@@ -613,7 +613,7 @@ def run_embed(model_type: str,
               full_sequence_embed: bool = False,
               no_cuda: bool = False,
               seed: int = 42,
-              tokenizer: str = 'amino_acid',
+              tokenizer: str = 'iupac',
               num_workers: int = 8,
               log_level: typing.Union[str, int] = logging.INFO) -> None:
 

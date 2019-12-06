@@ -41,9 +41,8 @@ def create_base_parser() -> argparse.ArgumentParser:
     parser.add_argument('--local_rank', type=int, default=-1,
                         help='Local rank of process in distributed training. '
                              'Set by launch script.')
-    parser.add_argument('--tokenizer', choices=list(registry.tokenizer_name_mapping.keys()),
-                        default='amino_acid',
-                        help='Tokenizes to use on the amino acid sequences')
+    parser.add_argument('--tokenizer', choices=['iupac', 'unirep'],
+                        default='iupac', help='Tokenizes to use on the amino acid sequences')
     parser.add_argument('--num_workers', default=8, type=int,
                         help='Number of workers to use for multi-threaded data loading')
     parser.add_argument('--log_level', default=logging.INFO,

@@ -99,7 +99,7 @@ class TAPETokenizer():
     """
 
     def __init__(self, vocab: str = 'iupac'):
-        if vocab in ('iupac', 'fasta'):
+        if vocab == 'iupac':
             self.vocab = IUPAC_VOCAB
         elif vocab == 'unirep':
             self.vocab = UNIREP_VOCAB
