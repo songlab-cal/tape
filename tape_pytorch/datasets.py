@@ -221,9 +221,9 @@ class EmbedDataset(Dataset):
         return {'ids': ids, 'input_ids': tokens, 'input_mask': input_mask}  # type: ignore
 
 
-@registry.register_task('language_modeling')
-class PfamDataset(Dataset):
-    """Creates the Pfam Dataset
+@registry.register_task('masked_language_modeling')
+class MaskedLanguageModelingDataset(Dataset):
+    """Creates the Masked Language Modeling Pfam Dataset
     Args:
         data_path (Union[str, Path]): Path to tape data root.
         split (str): One of ['train', 'valid', 'holdout'], specifies which data file to load.
@@ -308,6 +308,59 @@ class PfamDataset(Dataset):
                 masked_tokens[i] = token
 
         return masked_tokens, labels
+
+
+@registry.register_task('language_modeling')
+class LanguageModelingDataset(Dataset):
+    """Creates the Language Modeling Pfam Dataset
+    Args:
+        data_path (Union[str, Path]): Path to tape data root.
+        split (str): One of ['train', 'valid', 'holdout'], specifies which data file to load.
+        in_memory (bool, optional): Whether to load the full dataset into memory.
+            Default: False.
+    """
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
+                 in_memory: bool = False):
+        super().__init__()
+        if split not in ('train', 'valid', 'holdout'):
+            raise ValueError(
+                f"Unrecognized split: {split}. "
+                f"Must be one of ['train', 'valid', 'holdout']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
+
+        data_path = Path(data_path)
+        data_file = f'pfam/pfam_{split}.lmdb'
+        self.data = dataset_factory(data_file, in_memory)
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, index):
+        item = self.data[index]
+        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        input_mask = np.ones_like(token_ids)
+
+        return token_ids, input_mask, item['clan'], item['family']
+
+    def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
+        input_ids, input_mask, clan, family = tuple(zip(*batch))
+
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
+        # ignore_index is -1
+        lm_label_ids = torch.from_numpy(pad_sequences(input_ids, -1))
+        clan = torch.LongTensor(clan)  # type: ignore
+        family = torch.LongTensor(family)  # type: ignore
+
+        return {'input_ids': input_ids,
+                'input_mask': input_mask,
+                'targets': lm_label_ids}
 
 
 @registry.register_task('fluorescence')
