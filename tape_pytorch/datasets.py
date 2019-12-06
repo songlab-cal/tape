@@ -120,6 +120,45 @@ class LMDBDataset(Dataset):
                 item = pkl.loads(txn.get(str(index).encode()))
                 if self._in_memory:
                     self._cache[index] = item
+        if 'id' not in item:
+            item['id'] = str(index)
+        return item
+
+
+class JSONDataset(Dataset):
+    """Creates a dataset from a json file. Assumes that data is
+       a JSON serialized list of record, where each record is
+       a dictionary.
+    Args:
+        data_file (Union[str, Path]): Path to json file.
+    """
+
+    def __init__(self, data_file: Union[str, Path]):
+        import json
+        data_file = Path(data_file)
+        if not data_file.exists():
+            raise FileNotFoundError(data_file)
+        records = json.loads(data_file.read_text())
+
+        if not isinstance(records, list):
+            raise TypeError(f"TAPE JSONDataset requires a json serialized list, "
+                            f"received {type(records)}")
+        self._records = records
+        self._num_examples = len(records)
+
+    def __len__(self) -> int:
+        return self._num_examples
+
+    def __getitem__(self, index: int):
+        if not 0 <= index < self._num_examples:
+            raise IndexError(index)
+
+        item = self._records[index]
+        if not isinstance(item, dict):
+            raise TypeError(f"Expected dataset to contain a list of dictionary "
+                            f"records, received record of type {type(item)}")
+        if 'id' not in item:
+            item['id'] = str(index)
         return item
 
 
@@ -145,9 +184,11 @@ class TAPEDataset(Dataset):
         self._convert_tokens_to_ids = convert_tokens_to_ids
 
         if data_file.suffix == '.lmdb':
-            self._dataset: Dataset = LMDBDataset(data_file)
+            self._dataset: Dataset = LMDBDataset(data_file, in_memory)
         elif data_file.suffix == '.fasta':
-            self._dataset = FastaDataset(data_file)
+            self._dataset = FastaDataset(data_file, in_memory)
+        elif data_file.suffix == '.json':
+            self._dataset = JSONDataset(data_file)
         else:
             raise ValueError(f"Unrecognized dataset type: {data_file.suffix}")
 
