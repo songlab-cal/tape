@@ -3,13 +3,9 @@
 In order to add a new task to TAPE, you must do a few things:
 
     1) Serialize the data into different splits (e.g. train, val, test) and place
-       them in an appropriate folder inside the tape_pytorch data directory. At
-       the moment, TAPE supports lmdb and fasta datasets.
-    2) Define a dataset as a subclass of TAPEDataset. This should load and return
+       them in an appropriate folder inside the tape_pytorch data directory.
+    2) Define a dataset as a subclass of a torch Dataset. This should load and return
        the data from your splits.
-    2b) Alternatively, as long as you maintain the same API as TAPEDataset, you
-        can also simply define a new dataset and load from any arbitrary file
-        type.
     3) Define a collate_fn as a method of your dataset which will describe how
        to load in a batch of data (pytorch does not automatically batch variable
        length sequences).
@@ -23,12 +19,13 @@ task using the pre-existing secondary structure data.
 
 from typing import Union, List, Tuple, Any, Dict
 import torch
+from torch.utils.data import Dataset
 from pathlib import Path
 import numpy as np
 
-from tape_pytorch.datasets import TAPEDataset
-from tape_pytorch import tokenizers
+from tape_pytorch.datasets import LMDBDataset, pad_sequences
 from tape_pytorch.registry import registry
+from tape_pytorch.tokenizers import TAPETokenizer
 from tape_pytorch import ProteinBertForSequenceToSequenceClassification
 
 
@@ -36,16 +33,16 @@ from tape_pytorch import ProteinBertForSequenceToSequenceClassification
 # we need to tell TAPE how many labels the downstream model will use. If this
 # wasn't a classification task, that argument could simply be dropped.
 @registry.register_task('secondary_structure_8', num_labels=8)
-class SecondaryStructure8ClassDataset(TAPEDataset):
+class SecondaryStructure8ClassDataset(Dataset):
     """ Defines the 8-class secondary structure prediction dataset.
 
     Args:
         data_path (Union[str, Path]): Path to tape data directory. By default, this is
             assumed to be `./data`. Can be altered on the command line with the --data_dir
             flag.
-        mode (str): The specific dataset split to load often <train, valid, test>. In the
+        split (str): The specific dataset split to load often <train, valid, test>. In the
             case of secondary structure, there are three test datasets so each of these
-            has a separate mode flag.
+            has a separate split flag.
         tokenizer (str): The model tokenizer to use when returning tokenized indices.
         in_memory (bool): Whether to load the entire dataset into memory or to keep
             it on disk.
@@ -53,29 +50,43 @@ class SecondaryStructure8ClassDataset(TAPEDataset):
 
     def __init__(self,
                  data_path: Union[str, Path],
-                 mode: str,
-                 tokenizer: Union[str, tokenizers.TAPETokenizer] = 'amino_acid',
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
                  in_memory: bool = False):
 
-        if mode not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
-            raise ValueError(f"Unrecognized mode: {mode}. Must be one of "
+        if split not in ('train', 'valid', 'casp12', 'ts115', 'cb513'):
+            raise ValueError(f"Unrecognized split: {split}. Must be one of "
                              f"['train', 'valid', 'casp12', "
                              f"'ts115', 'cb513']")
 
+        if isinstance(tokenizer, str):
+            # If you get tokenizer in as a string, create an actual tokenizer
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
+
+        # Define the path to the data file. There are three helper datasets
+        # that you can import from tape_pytorch.datasets - a FastaDataset,
+        # a JSONDataset, and an LMDBDataset. You can use these to load raw
+        # data from your files (or of course, you can do this manually).
         data_path = Path(data_path)
-        data_file = f'secondary_structure/secondary_structure_{mode}.lmdb'
-        super().__init__(data_path, data_file, tokenizer, in_memory)
+        data_file = f'secondary_structure/secondary_structure_{split}.lmdb'
+        self.data = LMDBDataset(data_path / data_file, in_memory=in_memory)
+
+    def __len__(self) -> int:
+        return len(self.data)
 
     def __getitem__(self, index: int):
-        """ Override TAPEDataset's __getitem__. The superclass will return
-        three things on __getitem__:
-            1) The full item loaded from the LMDB/Fasta file (a dictionary)
-            2) The tokenized primary sequence
-            3) A set of ones - this will be padded into an attention mask
-               in the collate_fn
+        """ Return an item from the dataset. We've got an LMDBDataset that
+            will load the raw data and return dictionaries. We have to then
+            take that, load the keys that we need, tokenize and convert
+            the amino acids to ids, and return the result.
         """
-
-        item, token_ids, input_mask = super().__getitem__(index)
+        item = self.data[index]
+        # tokenize + convert to numpy
+        token_ids = self.tokenizer.tokenize_and_numpy(item)
+        # this will be the attention mask - we'll pad it out in
+        # collate_fn
+        input_mask = np.ones_like(token_ids)
 
         # pad with -1s because of cls/sep tokens
         labels = np.asarray(item['ss8'], np.int64)
@@ -87,11 +98,15 @@ class SecondaryStructure8ClassDataset(TAPEDataset):
         """ Define a collate_fn to convert the variable length sequences into
             a batch of torch tensors. token ids and mask should be padded with
             zeros. Labels for classification should be padded with -1.
+
+            This takes in a list of outputs from the dataset's __getitem__
+            method. You can use the `pad_sequences` helper function to pad
+            a list of numpy arrays.
         """
         input_ids, input_mask, ss_label = tuple(zip(*batch))
-        input_ids = torch.from_numpy(self.pad_sequences(input_ids, 0))
-        input_mask = torch.from_numpy(self.pad_sequences(input_mask, 0))
-        ss_label = torch.from_numpy(self.pad_sequences(ss_label, -1))
+        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
+        ss_label = torch.from_numpy(pad_sequences(ss_label, -1))
 
         output = {'input_ids': input_ids,
                   'input_mask': input_mask,

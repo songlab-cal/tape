@@ -221,7 +221,7 @@ class EmbedDataset(Dataset):
         return {'ids': ids, 'input_ids': tokens, 'input_mask': input_mask}  # type: ignore
 
 
-@registry.register_task('language_splitling')
+@registry.register_task('language_modeling')
 class PfamDataset(Dataset):
     """Creates the Pfam Dataset
     Args:
