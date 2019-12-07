@@ -1,10 +1,6 @@
-cython
-ipython
 torch>=1.0
 torchvision
 tqdm
-pytorch-transformers
 tensorboardX
-sentencepiece
 scipy
 lmdb

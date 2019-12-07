@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from pytorch_transformers import WarmupLinearSchedule
+from .optimization import WarmupLinearSchedule
 
 from . import utils
 from . import errors

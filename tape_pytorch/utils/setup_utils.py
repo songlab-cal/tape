@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import DataLoader, RandomSampler, Dataset
 from torch.utils.data.distributed import DistributedSampler
-from pytorch_transformers import AdamW
+from ..optimization import AdamW
 
 from tape_pytorch.registry import registry
 
