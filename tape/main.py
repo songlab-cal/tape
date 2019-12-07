@@ -12,9 +12,9 @@ try:
 except ImportError:
     APEX_FOUND = False
 
-from tape_pytorch.registry import registry
-import tape_pytorch.training as training
-import tape_pytorch.utils as utils
+from .registry import registry
+from . import training
+from . import utils
 
 CallbackList = typing.Sequence[typing.Callable]
 OutputDict = typing.Dict[str, typing.List[typing.Any]]

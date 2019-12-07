@@ -1,8 +1,8 @@
 import torch
 import torch.distributed as dist
 import argparse
-import tape_pytorch.utils as utils
-from tape_pytorch.errors import EarlyStopping
+import tape.utils as utils
+from tape.errors import EarlyStopping
 import os
 import time
 

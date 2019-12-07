@@ -1,9 +1,9 @@
-"""Example of how to add a task in tape_pytorch.
+"""Example of how to add a task in tape.
 
 In order to add a new task to TAPE, you must do a few things:
 
     1) Serialize the data into different splits (e.g. train, val, test) and place
-       them in an appropriate folder inside the tape_pytorch data directory.
+       them in an appropriate folder inside the tape data directory.
     2) Define a dataset as a subclass of a torch Dataset. This should load and return
        the data from your splits.
     3) Define a collate_fn as a method of your dataset which will describe how
@@ -23,10 +23,10 @@ from torch.utils.data import Dataset
 from pathlib import Path
 import numpy as np
 
-from tape_pytorch.datasets import LMDBDataset, pad_sequences
-from tape_pytorch.registry import registry
-from tape_pytorch.tokenizers import TAPETokenizer
-from tape_pytorch import ProteinBertForSequenceToSequenceClassification
+from tape.datasets import LMDBDataset, pad_sequences
+from tape.registry import registry
+from tape.tokenizers import TAPETokenizer
+from tape import ProteinBertForSequenceToSequenceClassification
 
 
 # Register the dataset as a new TAPE task. Since it's a classification task
@@ -65,7 +65,7 @@ class SecondaryStructure8ClassDataset(Dataset):
         self.tokenizer = tokenizer
 
         # Define the path to the data file. There are three helper datasets
-        # that you can import from tape_pytorch.datasets - a FastaDataset,
+        # that you can import from tape.datasets - a FastaDataset,
         # a JSONDataset, and an LMDBDataset. You can use these to load raw
         # data from your files (or of course, you can do this manually).
         data_path = Path(data_path)
@@ -121,10 +121,10 @@ registry.register_task_model(
 
 if __name__ == '__main__':
     """ To actually run the task, you can do one of two things. You can
-    simply import the appropriate run function from tape_pytorch.main. The
+    simply import the appropriate run function from tape.main. The
     possible functions are `run_train`, `run_train_distributed`, and
     `run_eval`. Alternatively, you can add this dataset directly to
-    tape_pytorch/datasets.py.
+    tape/datasets.py.
     """
-    from tape_pytorch.main import run_train
+    from tape.main import run_train
     run_train()

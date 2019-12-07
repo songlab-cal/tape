@@ -4,7 +4,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import torch  # noqa: E402
-from tape_pytorch.models.resnet import ResNet, ResNetConfig  # noqa: E402
+from tape.models.resnet import ResNet, ResNetConfig  # noqa: E402
 
 
 DATA_PATH = Path(__file__).parent.parent / 'data'

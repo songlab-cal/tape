@@ -166,7 +166,7 @@ class Registry:
             name: Key with which the metric will be registered.
 
         Usage::
-            from tape_pytorch.registry import registry
+            from tape.registry import registry
 
             @registry.register_metric('mse')
             def mean_squred_error(inputs, outputs):

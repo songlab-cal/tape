@@ -1,7 +1,7 @@
-"""Example of how to add a model in tape_pytorch.
+"""Example of how to add a model in tape.
 
-This file shows an example of how to add a new model to the tape_pytorch training
-pipeline. tape_pytorch models follow the huggingface API and so require:
+This file shows an example of how to add a new model to the tape training
+pipeline. tape models follow the huggingface API and so require:
 
     - A config class
     - An abstract model class
@@ -10,20 +10,20 @@ pipeline. tape_pytorch models follow the huggingface API and so require:
 
 This will walkthrough how to create each of these, with a task-specific class for
 secondary structure prediction. You can look at the other task-specific classes
-defined in e.g. tape_pytorch/models/modeling_bert.py for examples on how to
+defined in e.g. tape/models/modeling_bert.py for examples on how to
 define these other task-specific models for e.g. contact prediction or fluorescence
 prediction.
 
 In addition to defining these models, this shows how to register the model to
-tape_pytorch so that you can use the same training machinery to run your tasks.
+tape so that you can use the same training machinery to run your tasks.
 """
 
 
 import torch
 import torch.nn as nn
-from tape_pytorch import ProteinModel, ProteinConfig
-from tape_pytorch.models.modeling_utils import SequenceToSequenceClassificationHead
-from tape_pytorch.registry import registry
+from tape import ProteinModel, ProteinConfig
+from tape.models.modeling_utils import SequenceToSequenceClassificationHead
+from tape.registry import registry
 
 
 class SimpleConvConfig(ProteinConfig):
@@ -170,11 +170,11 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
 
 if __name__ == '__main__':
     """ To actually run the model, you can do one of two things. You can
-    simply import the appropriate run function from tape_pytorch.main. The
+    simply import the appropriate run function from tape.main. The
     possible functions are `run_train`, `run_train_distributed`, `run_eval`,
     and `run_embed`. Alternatively, you can simply place this file inside
-    the `tape_pytorch/models` directory, where it will be auto-imported
-    into tape_pytorch.
+    the `tape/models` directory, where it will be auto-imported
+    into tape.
     """
-    from tape_pytorch.main import run_train
+    from tape.main import run_train
     run_train()

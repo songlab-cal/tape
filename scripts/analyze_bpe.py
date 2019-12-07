@@ -1,8 +1,8 @@
 from pathlib import Path
 from collections import Counter
 import numpy as np
-from tape_pytorch.tokenizers import PfamTokenizer
-from tape_pytorch.datasets import TAPEDataset
+from tape.tokenizers import PfamTokenizer
+from tape.datasets import TAPEDataset
 from tqdm import tqdm
 import itertools
 

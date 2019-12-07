@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader, RandomSampler, Dataset
 from torch.utils.data.distributed import DistributedSampler
 from ..optimization import AdamW
 
-from tape_pytorch.registry import registry
+from ..registry import registry
 
 from .utils import get_effective_batch_size
 from ._sampler import BucketBatchSampler

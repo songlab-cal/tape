@@ -6,7 +6,7 @@ import math  # noqa: E402
 import tempfile  # noqa: E402
 
 import torch  # noqa: E402
-from tape_pytorch import models  # noqa: E402
+from tape import models  # noqa: E402
 
 
 torch.set_grad_enabled(False)

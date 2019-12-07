@@ -2,7 +2,7 @@ import argparse
 import math
 from tqdm import tqdm
 from Bio.SeqIO.FastaIO import Seq, SeqRecord
-from tape_pytorch.datasets import LMDBDataset
+from tape.datasets import LMDBDataset
 
 parser = argparse.ArgumentParser(description='Convert an lmdb file into a fasta file')
 parser.add_argument('lmdbfile', type=str, help='The lmdb file to convert')

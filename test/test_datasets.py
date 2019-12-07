@@ -1,4 +1,4 @@
-from tape_pytorch import datasets
+from tape import datasets
 from pathlib import Path
 import numpy as np
 import random

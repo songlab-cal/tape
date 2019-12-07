@@ -6,7 +6,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import torch  # noqa: E402
-from tape_pytorch import models  # noqa: E402
+from tape import models  # noqa: E402
 
 
 DATA_PATH = Path(__file__).parent.parent / 'data'

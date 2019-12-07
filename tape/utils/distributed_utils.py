@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from torch.multiprocessing import _prctl_pr_set_pdeathsig  # type: ignore
 
-from tape_pytorch.errors import EarlyStopping
+from ..errors import EarlyStopping
 
 
 def reduce_scalar(scalar: float) -> float:
