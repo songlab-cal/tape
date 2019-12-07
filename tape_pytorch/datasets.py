@@ -209,7 +209,7 @@ class EmbedDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
         return item['id'], token_ids, input_mask
 
@@ -343,7 +343,7 @@ class LanguageModelingDataset(Dataset):
 
     def __getitem__(self, index):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
 
         return token_ids, input_mask, item['clan'], item['family']
@@ -388,7 +388,7 @@ class FluorescenceDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, float(item['log_fluorescence'][0])
 
@@ -430,7 +430,7 @@ class StabilityDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, float(item['stability_score'][0])
 
@@ -473,7 +473,7 @@ class RemoteHomologyDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
         return token_ids, input_mask, item['fold_label']
 
@@ -514,7 +514,7 @@ class ProteinnetDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
 
         valid_mask = item['valid_mask']
@@ -564,7 +564,7 @@ class SecondaryStructureDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
 
         # pad with -1s because of cls/sep tokens

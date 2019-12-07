@@ -83,7 +83,7 @@ class SecondaryStructure8ClassDataset(Dataset):
         """
         item = self.data[index]
         # tokenize + convert to numpy
-        token_ids = self.tokenizer.tokenize_and_numpy(item['primary'])
+        token_ids = self.tokenizer.encode(item['primary'])
         # this will be the attention mask - we'll pad it out in
         # collate_fn
         input_mask = np.ones_like(token_ids)

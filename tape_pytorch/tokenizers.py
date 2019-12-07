@@ -163,7 +163,7 @@ class TAPETokenizer():
         sep_token = [self.stop_token]
         return cls_token + token_ids + sep_token
 
-    def tokenize_and_numpy(self, text: str) -> np.ndarray:
+    def encode(self, text: str) -> np.ndarray:
         tokens = self.tokenize(text)
         tokens = self.add_special_tokens(tokens)
         token_ids = self.convert_tokens_to_ids(tokens)
