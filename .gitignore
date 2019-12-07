@@ -113,3 +113,8 @@ venv.bak/
 # vim gitignores
 *.swp
 *.swo
+*.npy
+*.pkl
+*.npz
+*.fasta
+*.lmdb
