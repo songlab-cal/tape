@@ -5,8 +5,8 @@ from setuptools import setup
 with open('README.md', 'r') as rf:
     README = rf.read()
 
-# with open('LICENSE', 'r') as lf:
-    # LICENSE = lf.read()
+with open('LICENSE', 'r') as lf:
+    LICENSE = lf.read()
 
 setup(
     name='tape',
@@ -16,7 +16,7 @@ setup(
     author='Roshan Rao, Nick Bhattacharya, Neil Thomas',
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
     url='https://github.com/rmrao/tape-pytorch',
-    # license=LICENSE,
+    license=LICENSE,
     install_requires=[],
     entry_points={
         'console_scripts': [
