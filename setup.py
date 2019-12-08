@@ -17,7 +17,14 @@ setup(
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
     url='https://github.com/rmrao/tape-pytorch',
     license=LICENSE,
-    install_requires=[],
+    keywords=['Proteins', 'Deep Learning', 'Pytorch'],
+    install_requires=[
+        'torch>=1.0',
+        'tqdm',
+        'tensorboardX',
+        'scipy',
+        'lmdb',
+    ],
     entry_points={
         'console_scripts': [
             'tape-train = tape.main:run_train',

@@ -1,5 +1,4 @@
 torch>=1.0
-torchvision
 tqdm
 tensorboardX
 scipy
