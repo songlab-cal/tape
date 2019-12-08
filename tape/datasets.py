@@ -247,7 +247,7 @@ class MaskedLanguageModelingDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'pfam/pfam_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -336,7 +336,7 @@ class LanguageModelingDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'pfam/pfam_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -381,7 +381,7 @@ class FluorescenceDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'fluorescence/fluorescence_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -423,7 +423,7 @@ class StabilityDataset(Dataset):
         data_path = Path(data_path)
         data_file = f'stability/stability_{split}.lmdb'
 
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -466,7 +466,7 @@ class RemoteHomologyDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'remote_homology/remote_homology_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -507,7 +507,7 @@ class ProteinnetDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'proteinnet/proteinnet_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
@@ -557,7 +557,7 @@ class SecondaryStructureDataset(Dataset):
 
         data_path = Path(data_path)
         data_file = f'secondary_structure/secondary_structure_{split}.lmdb'
-        self.data = dataset_factory(data_file, in_memory)
+        self.data = dataset_factory(data_path / data_file, in_memory)
 
     def __len__(self) -> int:
         return len(self.data)
