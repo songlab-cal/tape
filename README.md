@@ -6,6 +6,8 @@ This repository is *not* an effort to maintain maximum compatibility and reprodu
 
 Our paper is available at [https://arxiv.org/abs/1906.08230](https://arxiv.org/abs/1906.08230).
 
+Some documentation is incomplete. We will try to fill it in over time, but if there is something you would like an explanation for, please open an issue so we know where to focus our effort!
+
 ## Contents
 
 * [Installation](#installation)
