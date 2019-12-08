@@ -238,7 +238,7 @@ __TAPE (Our paper):__
 @inproceedings{tape2019,
 author = {Rao, Roshan and Bhattacharya, Nicholas and Thomas, Neil and Duan, Yan and Chen, Xi and Canny, John and Abbeel, Pieter and Song, Yun S},
 title = {Evaluating Protein Transfer Learning with TAPE},
-journal = {}
+booktitle = {Advances in Neural Information Processing Systems}
 year = {2019}
 }
 ```
