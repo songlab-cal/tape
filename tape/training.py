@@ -575,9 +575,6 @@ def run_eval(model_type: str,
 
     model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
 
-    if n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
     runner = ForwardRunner(model, device, n_gpu)
     runner.initialize_distributed_model()
     valid_dataset = utils.setup_dataset(task, data_dir, split, tokenizer)
