@@ -1,10 +1,29 @@
+"""Example of how to add a model in tape.
+
+This file shows an example of how to add a new model to the tape training
+pipeline. tape models follow the huggingface API and so require:
+
+    - A config class
+    - An abstract model class
+    - A model class to output sequence and pooled embeddings
+    - Task-specific classes for each individual task
+
+This will walkthrough how to create each of these, with a task-specific class for
+secondary structure prediction. You can look at the other task-specific classes
+defined in e.g. tape/models/modeling_bert.py for examples on how to
+define these other task-specific models for e.g. contact prediction or fluorescence
+prediction.
+
+In addition to defining these models, this shows how to register the model to
+tape so that you can use the same training machinery to run your tasks.
+"""
+
+
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from protein_models import ProteinConfig
-from protein_models import ProteinModel
-from protein_models.modeling_utils import SequenceToSequenceClassificationHead
-from tape_pytorch.registry import registry
+from tape import ProteinModel, ProteinConfig
+from tape.models.modeling_utils import SequenceToSequenceClassificationHead
+from tape.registry import registry
 
 
 class SimpleConvConfig(ProteinConfig):
@@ -12,13 +31,16 @@ class SimpleConvConfig(ProteinConfig):
         ProteinConfig. It's a very straightforward definition, which just
         accepts the arguments that you would like the model to take in
         and assigns them to the class.
+
+        Note - if you do not initialize using a model config file, you
+        must provide defaults for all arguments.
     """
 
     def __init__(self,
-                 vocab_size: int,
-                 filter_size: int,
-                 kernel_size: int,
-                 num_layers: int,
+                 vocab_size: int = 30,
+                 filter_size: int = 128,
+                 kernel_size: int = 5,
+                 num_layers: int = 3,
                  **kwargs):
         super().__init__(**kwargs)
         self.vocab_size = vocab_size
@@ -48,9 +70,9 @@ class SimpleConvModel(SimpleConvAbstractModel):
         super().__init__(config)
         self.embedding = nn.Embedding(config.vocab_size, config.filter_size)
         self.encoder = nn.Sequential(
-            nn.Conv1d(config.filter_size, config.filter_size, config.kernel_size,
-                      padding=config.kernel_size // 2)
-            for _ in range(config.num_layers))
+            *[nn.Conv1d(config.filter_size, config.filter_size, config.kernel_size,
+                        padding=config.kernel_size // 2)
+              for _ in range(config.num_layers)])
 
         self.pooler = nn.AdaptiveAvgPool1d(1)
 
@@ -107,11 +129,10 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
         self.classify = SequenceToSequenceClassificationHead(
             config.filter_size, config.num_labels)
 
-    def forward(self, input_ids, input_mask=None, amino_acid_labels=None):
-        # TODO (roshan): Standardize label names
-        """ Runs the forward model pass and may compute the loss if amino_acid_labels
+    def forward(self, input_ids, input_mask=None, targets=None):
+        """ Runs the forward model pass and may compute the loss if targets
             is present. Note that this does expect the third argument to be named
-            `amino_acid_labels`. You can look at the different defined models to see
+            `targets`. You can look at the different defined models to see
             what different tasks expect the label name to be.
 
         Args:
@@ -120,12 +141,8 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
             input_mask (Tensor[bool]):
                 Tensor of booleans w/ same shape as input_ids, indicating whether
                 a given sequence position is valid
-
-        Returns:
-            sequence_embedding (Tensor[float]):
-                Embedded sequence of shape [batch_size x protein_length x hidden_size]
-            pooled_embedding (Tensor[float]):
-                Pooled representation of the entire sequence of size [batch_size x hidden_size]
+            targets (Tensor[long], optional):
+                Tensor of output target labels of shape [batch_size x protein_length]
         """
         outputs = self.simple_conv(input_ids, input_mask)
         sequence_embedding = outputs[0]
@@ -134,14 +151,16 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
 
         outputs = (prediction,)
 
-        if amino_acid_labels is not None:
+        if targets is not None:
             loss = nn.CrossEntropyLoss(ignore_index=-1)(
-                prediction.view(-1, prediction.size(2)), amino_acid_labels.view(-1))
+                prediction.view(-1, prediction.size(2)), targets.view(-1))
             # cast to float b/c float16 does not have argmax support
-            is_correct = prediction.float().argmax(-1) == amino_acid_labels
-            is_valid_position = amino_acid_labels != -1
+            is_correct = prediction.float().argmax(-1) == targets
+            is_valid_position = targets != -1
 
-            accuracy = torch.sum(is_correct * is_valid_position) / torch.sum(is_valid_position)
+            # cast to float b/c otherwise torch does integer division
+            num_correct = torch.sum(is_correct * is_valid_position).float()
+            accuracy = num_correct / torch.sum(is_valid_position).float()
             metrics = {'acc': accuracy}
 
             outputs = ((loss, metrics),) + outputs
@@ -150,5 +169,12 @@ class SimpleConvForSequenceToSequenceClassification(SimpleConvAbstractModel):
 
 
 if __name__ == '__main__':
-    from tape_pytorch.main import run_train
+    """ To actually run the model, you can do one of two things. You can
+    simply import the appropriate run function from tape.main. The
+    possible functions are `run_train`, `run_train_distributed`, `run_eval`,
+    and `run_embed`. Alternatively, you can simply place this file inside
+    the `tape/models` directory, where it will be auto-imported
+    into tape.
+    """
+    from tape.main import run_train
     run_train()

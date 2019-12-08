@@ -2,7 +2,7 @@ from typing import Sequence
 import numpy as np
 import scipy.stats
 
-from tape_pytorch.registry import registry
+from .registry import registry
 
 
 @registry.register_metric('mse')

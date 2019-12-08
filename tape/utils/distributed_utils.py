@@ -9,7 +9,7 @@ import torch
 import torch.distributed as dist
 from torch.multiprocessing import _prctl_pr_set_pdeathsig  # type: ignore
 
-from tape_pytorch.errors import EarlyStopping
+from ..errors import EarlyStopping
 
 
 def reduce_scalar(scalar: float) -> float:
@@ -152,7 +152,7 @@ def launch_process_group(func: typing.Callable,
         current_env["LOCAL_RANK"] = str(local_rank)
         args.local_rank = local_rank
 
-        error_queue: typing.Queue[Exception] = mp.SimpleQueue()
+        error_queue: mp.SimpleQueue[Exception] = mp.SimpleQueue()
         kwargs = {'args': args, 'env': current_env}
         process = mp.Process(
             target=_wrap,

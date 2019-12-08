@@ -2,24 +2,24 @@ import typing
 import os
 import logging
 from timeit import default_timer as timer
-import itertools
-from collections import ChainMap
 import json
 from pathlib import Path
 import inspect
+import pickle as pkl
 
 from tqdm import tqdm
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from pytorch_transformers import WarmupLinearSchedule
+from .optimization import WarmupLinearSchedule
 
-from protein_models import ProteinModel
-import tape_pytorch.utils as utils
-import tape_pytorch.errors as errors
-import tape_pytorch.models as models
-import tape_pytorch.visualization as visualization
+from . import utils
+from . import errors
+from . import visualization
+from .registry import registry
+from .models.modeling_utils import ProteinModel
 
 try:
     from apex import amp
@@ -37,8 +37,6 @@ logger = logging.getLogger(__name__)
 MetricsDict = typing.Dict[str, float]
 LossAndMetrics = typing.Tuple[float, MetricsDict]
 OutputDict = typing.Dict[str, typing.Any]
-ForwardModelOutput = typing.Union[typing.Tuple[torch.Tensor, OutputDict],
-                                  typing.Tuple[torch.Tensor, OutputDict, OutputDict]]
 
 
 class ForwardRunner:
@@ -73,7 +71,8 @@ class ForwardRunner:
 
     def forward(self,
                 batch: typing.Dict[str, torch.Tensor],
-                return_outputs: bool = False) -> ForwardModelOutput:
+                return_outputs: bool = False,
+                no_loss: bool = False):
         # Filter out batch items that aren't used in this model
         # Requires that dataset keys match the forward args of the model
         # Useful if some elements of the data are only used by certain models
@@ -85,6 +84,10 @@ class ForwardRunner:
                      for name, tensor in batch.items()}
 
         outputs = self.model(**batch)
+
+        if no_loss:
+            return outputs
+
         if isinstance(outputs[0], tuple):
             # model also returned metrics
             loss, metrics = outputs[0]
@@ -132,6 +135,7 @@ class BackwardRunner(ForwardRunner):
         self._local_rank = local_rank
         self._overflow_buf = torch.cuda.IntTensor([0])  # type: ignore
         self.gradient_accumulation_steps = gradient_accumulation_steps
+        self._delay_accumulation = fp16 and local_rank != -1
 
         self.scheduler = WarmupLinearSchedule(
             self.optimizer, warmup_steps, num_train_optimization_steps)
@@ -180,10 +184,11 @@ class BackwardRunner(ForwardRunner):
         torch.save(optimizer_state, save_directory / 'checkpoint.bin')
 
     def backward(self, loss) -> None:
+        if not self._delay_accumulation:
+            loss = loss / self.gradient_accumulation_steps
         if self.fp16:
-            delay_overflow_check = self._local_rank != -1
             with amp.scale_loss(loss, self.optimizer,
-                                delay_overflow_check=delay_overflow_check) as scaled_loss:
+                                delay_overflow_check=self._delay_accumulation) as scaled_loss:
                 scaled_loss.backward()
         else:
             loss.backward()
@@ -319,12 +324,12 @@ def run_valid_epoch(epoch_id: int,
     accumulator = utils.MetricsAccumulator()
 
     torch.set_grad_enabled(False)
-    runner.model.eval()
+    runner.eval()
 
     for batch in tqdm(valid_loader, desc='Running Eval', total=num_batches,
                       disable=not is_master, leave=False):
         loss, metrics = runner.forward(batch)  # type: ignore
-        accumulator.update(loss.item(), {name: value.item() for name, value in metrics.items()})
+        accumulator.update(loss, metrics)
 
     # Reduce loss across all processes if multiprocessing
     eval_loss = utils.reduce_scalar(accumulator.final_loss())
@@ -344,27 +349,37 @@ def run_valid_epoch(epoch_id: int,
     return eval_loss, metrics
 
 
+def _get_outputs_to_save(batch, outputs):
+    targets = batch['targets'].cpu().numpy()
+    outputs = outputs.cpu().numpy()
+    protein_length = batch['protein_length'].sum(1).cpu().numpy()
+
+    reshaped_output = []
+    for target, output, plength in zip(targets, outputs, protein_length):
+        output_slices = tuple(slice(1, plength - 1) if dim == protein_length.max() else
+                              slice(0, dim) for dim in output.shape)
+        output = output[output_slices]
+        target = target[output_slices]
+
+        reshaped_output.append((target, output))
+    reshaped_output
+
+
 def run_eval_epoch(eval_loader: DataLoader,
                    runner: ForwardRunner,
-                   is_master: bool = True,
-                   save_callback: typing.Optional[typing.Sequence[typing.Callable]] = None) \
-        -> typing.Dict[str, typing.List[typing.Any]]:
+                   is_master: bool = True) -> typing.List[typing.Tuple[np.ndarray, np.ndarray]]:
     num_batches = len(eval_loader)
     accumulator = utils.MetricsAccumulator()
     torch.set_grad_enabled(False)
-    runner.model.eval()
+    runner.eval()
 
     save_outputs = []
 
-    for batch in tqdm(eval_loader, desc='Evaluating split val', total=num_batches,
+    for batch in tqdm(eval_loader, desc='Evaluation', total=num_batches,
                       disable=not is_master):
         loss, metrics, outputs = runner.forward(batch, return_outputs=True)  # type: ignore
-        accumulator.update(
-            loss.item(), {name: value.item() for name, value in metrics.items()})
-        if save_callback is not None:
-            to_save = dict(ChainMap(
-                *(callback(runner.model, batch, outputs) for callback in save_callback)))
-            save_outputs.append(to_save)
+        accumulator.update(loss, metrics)
+        save_outputs.append(_get_outputs_to_save(batch, outputs))
 
     eval_loss = utils.reduce_scalar(accumulator.final_loss())
     final_print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
@@ -373,15 +388,7 @@ def run_eval_epoch(eval_loader: DataLoader,
         final_print_str += f"[{name.capitalize()}: {value:.5g}]"
     logger.info(final_print_str)
 
-    if len(save_outputs) > 0:
-        keys = save_outputs[0].keys()
-        output_dict = {
-            key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-            for key in keys}
-    else:
-        output_dict = {}
-
-    return output_dict
+    return save_outputs
 
 
 def run_train(model_type: str,
@@ -402,12 +409,11 @@ def run_train(model_type: str,
               save_freq: typing.Union[int, str] = 1,
               model_config_file: typing.Optional[str] = None,
               data_dir: str = './data',
-              vocab_file: str = './data/pfam.model',
               output_dir: str = './results',
               no_cuda: bool = False,
               seed: int = 42,
               local_rank: int = -1,
-              tokenizer: str = 'amino_acid',
+              tokenizer: str = 'iupac',
               num_workers: int = 8,
               debug: bool = False,
               log_level: typing.Union[str, int] = logging.INFO,
@@ -419,8 +425,8 @@ def run_train(model_type: str,
     device, n_gpu, is_master = utils.setup_distributed(
         local_rank, no_cuda)
 
-    exp_name = utils.get_expname(exp_name, task, model_type)
-    save_path = Path(output_dir) / exp_name
+    exp_dir = utils.get_expname(exp_name, task, model_type)
+    save_path = Path(output_dir) / exp_dir
 
     if is_master:
         # save all the hidden parameters.
@@ -435,18 +441,18 @@ def run_train(model_type: str,
     train_dataset = utils.setup_dataset(task, data_dir, 'train', tokenizer)
     valid_dataset = utils.setup_dataset(task, data_dir, 'valid', tokenizer)
     train_loader = utils.setup_loader(
-        task, train_dataset, batch_size, local_rank, n_gpu,
+        train_dataset, batch_size, local_rank, n_gpu,
         gradient_accumulation_steps, num_workers)
     valid_loader = utils.setup_loader(
-        task, valid_dataset, batch_size, local_rank, n_gpu,
+        valid_dataset, batch_size, local_rank, n_gpu,
         gradient_accumulation_steps, num_workers)
 
     num_train_optimization_steps = utils.get_num_train_optimization_steps(
         train_dataset, batch_size, num_train_epochs)
 
-    model = models.get(model_type, task, model_config_file, from_pretrained)
+    model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
     optimizer = utils.setup_optimizer(model, learning_rate)
-    viz = visualization.get(log_dir, exp_name, local_rank, debug=debug)
+    viz = visualization.get(log_dir, exp_dir, local_rank, debug=debug)
     viz.log_config(input_args)
     viz.log_config(model.config.to_dict())
     viz.watch(model)
@@ -464,7 +470,7 @@ def run_train(model_type: str,
     runner.initialize_fp16()
     if resume_from_checkpoint:
         assert from_pretrained is not None
-        runner.resume_from_checkpoint(from_pretrained)
+        start_epoch = runner.resume_from_checkpoint(from_pretrained)
     else:
         start_epoch = 0
     runner.initialize_distributed_model()
@@ -481,11 +487,13 @@ def run_train(model_type: str,
     if save_freq == 'improvement' and eval_freq <= 0:
         raise ValueError("Cannot set save_freq to 'improvement' and eval_freq < 0")
 
+    num_trainable_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
     logger.info("***** Running training *****")
     logger.info("  Num examples = %d", len(train_dataset))
     logger.info("  Batch size = %d", batch_size)
     logger.info("  Num epochs = %d", num_train_epochs)
     logger.info("  Num train steps = %d", num_train_optimization_steps)
+    logger.info("  Num parameters = %d", num_trainable_parameters)
 
     best_val_loss = float('inf')
     num_evals_no_improvement = 0
@@ -505,7 +513,7 @@ def run_train(model_type: str,
         for epoch_id in range(start_epoch, num_train_epochs):
             run_train_epoch(epoch_id, train_loader, runner,
                             viz, num_log_iter, gradient_accumulation_steps)
-            if eval_freq > 0 and epoch_id % eval_freq == 0:
+            if eval_freq > 0 and (epoch_id + 1) % eval_freq == 0:
                 val_loss, _ = run_valid_epoch(epoch_id, valid_loader, runner, viz, is_master)
                 if val_loss < best_val_loss:
                     best_val_loss = val_loss
@@ -517,10 +525,8 @@ def run_train(model_type: str,
             if do_save(epoch_id, num_evals_no_improvement):
                 logger.info("** ** * Saving trained model ** ** * ")
                 # Only save the model itself
-                output_model_dir = save_path / f"pytorch_model_{epoch_id}"
-                output_model_dir.mkdir()
-                runner.save_state(output_model_dir, epoch_id)
-                logger.info(f"Saving model checkpoint to {output_model_dir}")
+                runner.save_state(save_path, epoch_id)
+                logger.info(f"Saving model checkpoint to {save_path}")
 
             utils.barrier_if_distributed()
             if patience > 0 and num_evals_no_improvement >= patience:
@@ -538,3 +544,111 @@ def run_train(model_type: str,
     logger.info(f"Finished training after {num_train_epochs} epochs.")
     if best_val_loss != float('inf'):
         logger.log(35, f"Best Val Loss: {best_val_loss}")
+
+
+def run_eval(model_type: str,
+             task: str,
+             from_pretrained: str,
+             split: str = 'test',
+             batch_size: int = 1024,
+             model_config_file: typing.Optional[str] = None,
+             data_dir: str = './data',
+             no_cuda: bool = False,
+             seed: int = 42,
+             tokenizer: str = 'iupac',
+             num_workers: int = 8,
+             debug: bool = False,
+             # save_callback: typing.Tuple[str, ...] = (),
+             metrics: typing.Tuple[str, ...] = (),
+             log_level: typing.Union[str, int] = logging.INFO) -> typing.Dict[str, float]:
+
+    local_rank = -1  # TAPE does not support torch.distributed.launch for evaluation
+    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+    utils.setup_logging(local_rank, save_path=None, log_level=log_level)
+    utils.set_random_seeds(seed, n_gpu)
+
+    pretrained_dir = Path(from_pretrained)
+
+    logger.info(
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
+
+    model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
+
+    runner = ForwardRunner(model, device, n_gpu)
+    runner.initialize_distributed_model()
+    valid_dataset = utils.setup_dataset(task, data_dir, split, tokenizer)
+    valid_loader = utils.setup_loader(
+        valid_dataset, batch_size, local_rank, n_gpu,
+        1, num_workers)
+
+    # save_callbacks = [registry.get_callback(name) for name in save_callback]
+
+    # if len(metrics) > 0 and 'save_predictions' not in save_callback:
+        # save_callbacks.append(registry.get_callback('save_predictions'))
+    metric_functions = [registry.get_metric(name) for name in metrics]
+
+    save_outputs = run_eval_epoch(valid_loader, runner, is_master)
+
+    metrics_to_save = {name: metric(save_outputs)
+                       for name, metric in zip(metrics, metric_functions)}
+    logger.info(f'Evaluation Metrics: {metrics}')
+
+    with (pretrained_dir / 'results.pkl').open('wb') as f:
+        pkl.dump((metrics_to_save, save_outputs), f)
+
+    return metrics_to_save
+
+
+def run_embed(model_type: str,
+              data_file: str,
+              out_file: str,
+              from_pretrained: str,
+              batch_size: int = 1024,
+              model_config_file: typing.Optional[str] = None,
+              full_sequence_embed: bool = False,
+              no_cuda: bool = False,
+              seed: int = 42,
+              tokenizer: str = 'iupac',
+              num_workers: int = 8,
+              log_level: typing.Union[str, int] = logging.INFO) -> None:
+
+    local_rank = -1  # TAPE does not support torch.distributed.launch for embedding
+    device, n_gpu, is_master = utils.setup_distributed(local_rank, no_cuda)
+    utils.setup_logging(local_rank, save_path=None, log_level=log_level)
+    utils.set_random_seeds(seed, n_gpu)
+
+    logger.info(
+        f"device: {device} "
+        f"n_gpu: {n_gpu}")
+
+    task_spec = registry.get_task_spec('embed')
+    model = registry.get_task_model(
+        model_type, task_spec.name, model_config_file, from_pretrained)
+    runner = ForwardRunner(model, device, n_gpu)
+    runner.initialize_distributed_model()
+    runner.eval()
+    torch.set_grad_enabled(False)
+
+    dataset = task_spec.dataset(data_file, tokenizer=tokenizer)  # type: ignore
+    valid_loader = utils.setup_loader(dataset, batch_size, local_rank, n_gpu, 1, num_workers)
+
+    with utils.IncrementalNPZ(out_file) as npzfile:
+        for batch in tqdm(valid_loader, total=len(valid_loader)):
+            outputs = runner.forward(batch, no_loss=True)
+            ids = batch['ids']
+            sequence_embed = outputs[0]
+            pooled_embed = outputs[1]
+            sequence_lengths = batch['input_mask'].sum(1)
+            sequence_embed = sequence_embed.cpu().numpy()
+            pooled_embed = pooled_embed.cpu().numpy()
+            sequence_lengths = sequence_lengths.cpu().numpy()
+
+            for seqembed, poolembed, length, protein_id in zip(
+                    sequence_embed, pooled_embed, sequence_lengths, ids):
+                seqembed = seqembed[:length]
+                if not full_sequence_embed:
+                    # avgpool across the sequence
+                    seqembed = seqembed.mean(0)
+                to_save = {protein_id: (seqembed, poolembed)}
+                npzfile.savez(**to_save)

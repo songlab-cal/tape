@@ -1,20 +1,10 @@
 import typing
-import sys
 import os
 import logging
-from pathlib import Path
-import json
-import itertools
-from tqdm import tqdm
 import argparse
 import warnings
-import pickle as pkl
 import inspect
 
-import torch
-import torch.nn as nn
-
-import tape_pytorch.models as models
 
 try:
     import apex  # noqa: F401
@@ -22,9 +12,9 @@ try:
 except ImportError:
     APEX_FOUND = False
 
-from tape_pytorch.registry import registry
-import tape_pytorch.training as training
-import tape_pytorch.utils as utils
+from .registry import registry
+from . import training
+from . import utils
 
 CallbackList = typing.Sequence[typing.Callable]
 OutputDict = typing.Dict[str, typing.List[typing.Any]]
@@ -51,8 +41,8 @@ def create_base_parser() -> argparse.ArgumentParser:
     parser.add_argument('--local_rank', type=int, default=-1,
                         help='Local rank of process in distributed training. '
                              'Set by launch script.')
-    parser.add_argument('--tokenizer', choices=['bpe', 'amino_acid'], default='amino_acid',
-                        help='Tokenizes to use on the amino acid sequences')
+    parser.add_argument('--tokenizer', choices=['iupac', 'unirep'],
+                        default='iupac', help='Tokenizes to use on the amino acid sequences')
     parser.add_argument('--num_workers', default=8, type=int,
                         help='Number of workers to use for multi-threaded data loading')
     parser.add_argument('--log_level', default=logging.INFO,
@@ -88,7 +78,7 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Maximum gradient norm')
     parser.add_argument('--exp_name', default=None, type=str,
                         help='Name to give to this experiment')
-    parser.add_argument('--from_pretrained', default=None, type=utils.check_is_dir,
+    parser.add_argument('--from_pretrained', default=None, type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--log_dir', default='./logs', type=str)
     parser.add_argument('--eval_freq', type=int, default=1,
@@ -110,14 +100,10 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                                      parents=[base_parser])
     parser.add_argument('task', choices=list(registry.task_name_mapping.keys()),
                         help='TAPE Task to train/eval on')
-    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+    parser.add_argument('from_pretrained', type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
-    parser.add_argument('--save_callback', default=['save_predictions'],
-                        help=f'Callbacks to use when saving. '
-                             f'Choices: {list(registry.callback_name_mapping.keys())}',
-                        nargs='*')
     parser.add_argument('--metrics', default=[],
                         help=f'Metrics to run on the result. '
                              f'Choices: {list(registry.metric_name_mapping.keys())}',
@@ -131,14 +117,18 @@ def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
     parser = argparse.ArgumentParser(
         description='Embed a set of proteins wiht a pretrained model',
         parents=[base_parser])
-    parser.add_argument('datafile', type=str,
+    parser.add_argument('data_file', type=str,
                         help='File containing set of proteins to embed')
-    parser.add_argument('outfile', type=str,
+    parser.add_argument('out_file', type=str,
                         help='Name of output file')
-    parser.add_argument('from_pretrained', type=utils.check_is_dir,
+    parser.add_argument('from_pretrained', type=str,
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
+    parser.add_argument('--full_sequence_embed', action='store_true',
+                        help='If true, saves an embedding at every amino acid position '
+                             'in the sequence. Note that this can take a large amount '
+                             'of disk space.')
     parser.set_defaults(task='embed')
     return parser
 
@@ -210,47 +200,15 @@ def run_eval(args: typing.Optional[argparse.Namespace] = None) -> typing.Dict[st
     if args.local_rank != -1:
         raise ValueError("TAPE does not support distributed validation pass")
 
-    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    arg_dict = vars(args)
+    arg_names = inspect.getfullargspec(training.run_eval).args
 
-    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
-    utils.set_random_seeds(args.seed, n_gpu)
+    missing = set(arg_names) - set(arg_dict.keys())
+    if missing:
+        raise RuntimeError(f"Missing arguments: {missing}")
+    eval_args = {name: arg_dict[name] for name in arg_names}
 
-    pretrained_dir = Path(args.from_pretrained)
-
-    logger.info(
-        f"device: {device} "
-        f"n_gpu: {n_gpu}")
-
-    model = models.get(args.model_type, args.task, args.model_config_file, args.from_pretrained)
-
-    if n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    runner = training.ForwardRunner(model, device, n_gpu)
-    valid_dataset = utils.setup_dataset(args.task, args.data_dir, args.split, args.tokenizer)
-    valid_loader = utils.setup_loader(
-        args.task, valid_dataset, args.batch_size, args.local_rank, n_gpu,
-        1, args.num_workers)
-
-    save_callbacks = [registry.get_callback(name) for name in args.save_callback]
-
-    if len(args.metrics) > 0 and 'save_predictions' not in args.save_callback:
-        save_callbacks.append(registry.get_callback('save_predictions'))
-    metric_functions = [registry.get_metric(name) for name in args.metrics]
-
-    save_outputs = training.run_eval_epoch(valid_loader, runner, is_master, save_callbacks)
-
-    target_key = getattr(model, 'module', model).target_key
-    prediction_key = getattr(model, 'module', model).prediction_key
-    metrics = {name: metric(save_outputs[target_key], save_outputs[prediction_key])
-               for name, metric in zip(args.metrics, metric_functions)}
-    save_outputs.update(metrics)
-    logger.info(f'Evaluation Metrics: {metrics}')
-
-    with (pretrained_dir / 'results.pkl').open('wb') as f:
-        pkl.dump(save_outputs, f)
-
-    return metrics
+    return training.run_eval(**eval_args)
 
 
 def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
@@ -258,53 +216,20 @@ def run_embed(args: typing.Optional[argparse.Namespace] = None) -> None:
         base_parser = create_base_parser()
         parser = create_embed_parser(base_parser)
         args = parser.parse_args()
-
     if args.from_pretrained is None:
         raise ValueError("Must specify pretrained model")
     if args.local_rank != -1:
-        raise ValueError("TAPE does not support distributed embed pass")
+        raise ValueError("TAPE does not support distributed validation pass")
 
-    device, n_gpu, is_master = utils.setup_distributed(args.local_rank, args.no_cuda)
+    arg_dict = vars(args)
+    arg_names = inspect.getfullargspec(training.run_embed).args
 
-    utils.setup_logging(args.local_rank, save_path=None, log_level=args.log_level)
-    utils.set_random_seeds(args.seed, n_gpu)
+    missing = set(arg_names) - set(arg_dict.keys())
+    if missing:
+        raise RuntimeError(f"Missing arguments: {missing}")
+    embed_args = {name: arg_dict[name] for name in arg_names}
 
-    logger.info(
-        f"device: {device} "
-        f"n_gpu: {n_gpu}")
-
-    model = models.get(
-        args.model_type, args.task, args.model_config_file, args.from_pretrained)
-
-    if n_gpu > 1:
-        model = nn.DataParallel(model)  # type: ignore
-
-    dataset = utils.setup_dataset(args.task, args.data_dir, args.datafile, args.tokenizer)
-    loader = utils.setup_loader(
-        args.task, dataset, args.batch_size, args.local_rank, n_gpu, 1, args.num_workers)
-
-    torch.set_grad_enabled(False)
-    model.eval()
-
-    save_outputs = []
-    save_callback = registry.get_callback('save_embedding')
-
-    for batch in tqdm(loader, desc='Embedding sequences', total=len(loader),
-                      disable=not is_master):
-        cuda_batch = {name: tensor.cuda(device=device, non_blocking=True)
-                      for name, tensor in batch.items()}
-        outputs = model(**cuda_batch)
-
-        to_save = save_callback(model, batch, outputs)
-        save_outputs.append(to_save)
-
-    keys = save_outputs[0].keys()
-    output_dict = {
-        key: list(itertools.chain.from_iterable(output[key] for output in save_outputs))
-        for key in keys}
-
-    with (Path(args.outfile).with_suffix('.pkl')).open('wb') as f:
-        pkl.dump(output_dict, f)
+    training.run_embed(**embed_args)
 
 
 def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> None:
@@ -323,59 +248,6 @@ def run_train_distributed(args: typing.Optional[argparse.Namespace] = None) -> N
     utils.launch_process_group(
         run_train, args, args.nproc_per_node, args.nnodes,
         args.node_rank, args.master_addr, args.master_port)
-
-
-def run_gridsearch(args: typing.Optional[argparse.Namespace] = None, env=None) -> None:
-    import random
-    from copy import copy
-
-    if env is not None:
-        os.environ = env
-
-    if args is None:
-        parser = argparse.ArgumentParser()
-        parser.add_argument('config_file', type=argparse.FileType('r'))
-        gridsearch_args = parser.parse_args()
-        config = json.load(gridsearch_args.config_file)
-        gridsearch_args.config_file.close()
-
-        fixed_values = {}
-        grid_values = {}
-
-        for key, value in config.items():
-            if isinstance(value, list) and key != 'metrics':
-                grid_values[key] = value
-            else:
-                fixed_values[key] = value
-
-        args = argparse.Namespace(**fixed_values)
-
-    args.log_level = 'WARN'
-    args.exp_name = 'gridsearch' + "_{:0>6d}".format(random.randint(0, int(1e6)))
-    args.save_callback = []
-
-    gridsearch_logger = logging.getLogger('gridsearch')
-    gridsearch_logger.setLevel(logging.INFO)
-    gridsearch_handler = logging.StreamHandler(sys.stdout)
-    gridsearch_handler.setLevel(logging.INFO)
-    gridsearch_formatter = logging.Formatter(
-        "%(levelname)s - %(name)s -    %(message)s",
-        datefmt="%y/%m/%d %H:%M:%S")
-    gridsearch_handler.setFormatter(gridsearch_formatter)
-    gridsearch_logger.addHandler(gridsearch_handler)
-
-    def unroll(key, values):
-        return ((key, value) for value in values)
-    grid_search_args = list(itertools.product(*itertools.starmap(unroll, grid_values.items())))
-    for i, grid_args in enumerate(grid_search_args):
-        run_args = copy(args)
-        run_args.exp_name += f'_{i}'
-        for key, arg in grid_args:
-            setattr(run_args, key, arg)
-        gridsearch_logger.info(
-            f"Running gridsearch {i} / {len(grid_search_args)} with args {grid_args}")
-        run_train_distributed(run_args)
-        args.master_addr += 1
 
 
 if __name__ == '__main__':
