@@ -6,7 +6,7 @@ from pathlib import Path
 PathType = Union[str, Path]
 
 
-class TAPETaskSpec(NamedTuple):
+class TAPETaskSpec:
     """
     Attributes
     ----------
@@ -20,10 +20,15 @@ class TAPETaskSpec(NamedTuple):
         The set of models that can be used for this task. Default: {}.
     """
 
-    name: str
-    dataset: Type[Dataset]
-    num_labels: int = -1
-    models: Dict[str, Type[ProteinModel]] = {}
+    def __init__(self,
+                 name: str,
+                 dataset: Type[Dataset],
+                 num_labels: int = -1,
+                 models: Optional[Dict[str, Type[ProteinModel]]] = None):
+        self.name = name
+        self.dataset = dataset
+        self.num_labels = num_labels
+        self.models = models if models is not None else {}
 
     def register_model(self, model_name: str, model_cls: Optional[Type[ProteinModel]] = None):
         if model_cls is not None:
