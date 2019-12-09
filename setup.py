@@ -12,8 +12,6 @@ setup(
     name='tape',
     version='0.1',
     description='Repostory of Protein Benchmarking and Modeling',
-    long_description=README,
-    long_description_content_type='text/markdown',
     author='Roshan Rao, Nick Bhattacharya, Neil Thomas',
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
     url='https://github.com/rmrao/tape-pytorch',
