@@ -17,6 +17,7 @@ setup(
     url='https://github.com/rmrao/tape-pytorch',
     license=LICENSE,
     keywords=['Proteins', 'Deep Learning', 'Pytorch', 'TAPE'],
+    include_package_data=True,
     install_requires=[
         'torch>=1.0',
         'tqdm',
