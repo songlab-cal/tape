@@ -14,7 +14,7 @@ setup(
     description="Repostory of Protein Benchmarking and Modeling",
     author="Roshan Rao, Nick Bhattacharya, Neil Thomas",
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
-    url='https://github.com/rmrao/tape-pytorch',
+    url='https://github.com/songlab-cal/tape',
     license=LICENSE,
     keywords=['Proteins', 'Deep Learning', 'Pytorch', 'TAPE'],
     include_package_data=True,
