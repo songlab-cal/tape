@@ -11,7 +11,7 @@ with open('LICENSE', 'r') as lf:
 setup(
     name='tape_proteins',
     packages=find_packages(),
-    version='0.1.2',
+    version='0.2',
     description="Repostory of Protein Benchmarking and Modeling",
     author="Roshan Rao, Nick Bhattacharya, Neil Thomas",
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
