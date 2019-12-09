@@ -9,10 +9,10 @@ with open('LICENSE', 'r') as lf:
     LICENSE = lf.read()
 
 setup(
-    name='tape',
+    name='tape_proteins',
     version='0.1',
-    description='Repostory of Protein Benchmarking and Modeling',
-    author='Roshan Rao, Nick Bhattacharya, Neil Thomas',
+    description="Repostory of Protein Benchmarking and Modeling",
+    author="Roshan Rao, Nick Bhattacharya, Neil Thomas",
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
     url='https://github.com/rmrao/tape-pytorch',
     license=LICENSE,
