@@ -3,3 +3,4 @@ tqdm
 tensorboardX
 scipy
 lmdb
+boto3

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-from setuptools import setup
+from setuptools import setup, find_packages
 
 
 with open('README.md', 'r') as rf:
@@ -10,7 +10,8 @@ with open('LICENSE', 'r') as lf:
 
 setup(
     name='tape_proteins',
-    version='0.1',
+    packages=find_packages(),
+    version='0.1.2',
     description="Repostory of Protein Benchmarking and Modeling",
     author="Roshan Rao, Nick Bhattacharya, Neil Thomas",
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
@@ -24,6 +25,7 @@ setup(
         'tensorboardX',
         'scipy',
         'lmdb',
+        'boto3',
     ],
     entry_points={
         'console_scripts': [
