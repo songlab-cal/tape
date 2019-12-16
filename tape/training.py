@@ -451,6 +451,7 @@ def run_train(model_type: str,
         train_dataset, batch_size, num_train_epochs)
 
     model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
+    model = model.to(device)
     optimizer = utils.setup_optimizer(model, learning_rate)
     viz = visualization.get(log_dir, exp_dir, local_rank, debug=debug)
     viz.log_config(input_args)
@@ -574,6 +575,7 @@ def run_eval(model_type: str,
         f"n_gpu: {n_gpu}")
 
     model = registry.get_task_model(model_type, task, model_config_file, from_pretrained)
+    model = model.to(device)
 
     runner = ForwardRunner(model, device, n_gpu)
     runner.initialize_distributed_model()
@@ -625,6 +627,7 @@ def run_embed(model_type: str,
     task_spec = registry.get_task_spec('embed')
     model = registry.get_task_model(
         model_type, task_spec.name, model_config_file, from_pretrained)
+    model = model.to(device)
     runner = ForwardRunner(model, device, n_gpu)
     runner.initialize_distributed_model()
     runner.eval()

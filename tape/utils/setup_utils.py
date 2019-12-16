@@ -125,7 +125,7 @@ def setup_distributed(local_rank: int,
         dist.init_process_group(backend="nccl")
     elif not torch.cuda.is_available() or no_cuda:
         device = torch.device("cpu")
-        n_gpu = torch.cuda.device_count()
+        n_gpu = 1
     else:
         device = torch.device("cuda")
         n_gpu = torch.cuda.device_count()
