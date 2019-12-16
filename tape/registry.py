@@ -1,4 +1,4 @@
-from typing import Dict, Type, Callable, Optional, NamedTuple, Union
+from typing import Dict, Type, Callable, Optional, Union
 from torch.utils.data import Dataset
 from .models.modeling_utils import ProteinModel
 from pathlib import Path
