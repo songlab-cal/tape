@@ -223,7 +223,6 @@ class Registry:
                 config = config_class()
             config.num_labels = task_spec.num_labels
             model = model_cls(config)
-        model = model.cuda()
         return model
 
 
