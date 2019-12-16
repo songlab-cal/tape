@@ -1,4 +1,5 @@
 from . import datasets  # noqa: F401
+from .tokenizers import TAPETokenizer  # noqa: F401
 from .models.modeling_utils import ProteinModel
 from .models.modeling_utils import ProteinConfig
 
