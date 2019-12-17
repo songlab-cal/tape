@@ -5,3 +5,4 @@ scipy
 lmdb
 boto3
 requests
+biopython
