@@ -280,7 +280,7 @@ class IncrementalNPZ(object):
                 fname = key + '.npy'
                 fid = open(self.tmpfile, 'wb')
                 with open(self.tmpfile, 'wb') as fid:
-                    fmt.write_array(fid, np.asanyarray(val))
+                    fmt.write_array(fid, np.asanyarray(val), allow_pickle=True)
                 self.zip.write(self.tmpfile, arcname=fname)
         finally:
             os.remove(self.tmpfile)
