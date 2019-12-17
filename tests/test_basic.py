@@ -2,7 +2,7 @@ def test_basic():
     import torch
     from tape import ProteinBertModel, ProteinBertConfig, TAPETokenizer  # type: ignore
 
-    config = ProteinBertConfig(hidden_size=8, intermediate_size=8 * 4, num_hidden_layers=2)
+    config = ProteinBertConfig(hidden_size=12, intermediate_size=12 * 4, num_hidden_layers=2)
     model = ProteinBertModel(config)
     tokenizer = TAPETokenizer(vocab='iupac')
 
