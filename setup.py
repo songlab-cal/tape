@@ -26,6 +26,7 @@ setup(
         'scipy',
         'lmdb',
         'boto3',
+        'requests',
     ],
     entry_points={
         'console_scripts': [
