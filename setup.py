@@ -27,6 +27,7 @@ setup(
         'lmdb',
         'boto3',
         'requests',
+        'biopython',
     ],
     entry_points={
         'console_scripts': [
