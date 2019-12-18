@@ -31,8 +31,6 @@ def create_base_parser() -> argparse.ArgumentParser:
     parser.add_argument('model_type', help='Base model class to run')
     parser.add_argument('--model_config_file', default=None, type=utils.check_is_file,
                         help='Config file for model')
-    parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
-                        help='Directory from which to load task data')
     parser.add_argument('--vocab_file', default=None,
                         help='Pretrained tokenizer vocab file')
     parser.add_argument('--output_dir', default='./results', type=str)
@@ -63,6 +61,8 @@ def create_train_parser(base_parser: argparse.ArgumentParser) -> argparse.Argume
                         help='Learning rate')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
+    parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
+                        help='Directory from which to load task data')
     parser.add_argument('--num_train_epochs', default=10, type=int,
                         help='Number of training epochs')
     parser.add_argument('--num_log_iter', default=20, type=int,
@@ -104,6 +104,8 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
                         help='Directory containing config and pretrained model weights')
     parser.add_argument('--batch_size', default=1024, type=int,
                         help='Batch size')
+    parser.add_argument('--data_dir', default='./data', type=utils.check_is_dir,
+                        help='Directory from which to load task data')
     parser.add_argument('--metrics', default=[],
                         help=f'Metrics to run on the result. '
                              f'Choices: {list(registry.metric_name_mapping.keys())}',
