@@ -95,7 +95,11 @@ The embed function is fully batched and will automatically distribute across as 
 Once we have the output file, we can load it into numpy like so:
 
 ```python
-avg_embed, pooled_embed = np.load('output_filename.npz', allow_pickle=True)
+arrays = np.load('output_filename.npz', allow_pickle=True)
+
+list(arrays.keys())  # Will output the name of the keys in your fasta file (or if unnamed then '0', '1', ...)
+
+arrays[<protein_id>]  # Returns a dictionary with keys 'pooled' and 'avg', (or 'seq' if using the --full_sequence_embed flag)
 ```
 
 By default to save memory TAPE returns the average of the sequence embedding along with the pooled embedding generated through the pooling function. For some models (like UniRep), the pooled embedding is trained, and so can be used out of the box. For other models (like the transformer), the pooled embedding is not trained, and so the average embedding should be used. We will be looking into methods of self-supervised training the pooled embedding for all models in the future.
