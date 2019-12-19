@@ -60,23 +60,23 @@ class FastaDataset(Dataset):
         if not data_file.exists():
             raise FileNotFoundError(data_file)
 
-        if in_memory:
-            cache = list(SeqIO.parse(str(data_file)))
-            num_examples = len(cache)
-            self._cache = cache
-        else:
-            records = SeqIO.index(str(data_file), 'fasta')
-            num_examples = len(records)
-
-            if num_examples < 10000:
-                logger.info("Reading full fasta file into memory because number of examples "
-                            "is very low. This loads data approximately 20x faster.")
-                in_memory = True
-                cache = list(records.values())
-                self._cache = cache
-            else:
-                self._records = records
-                self._keys = list(records.keys())
+        # if in_memory:
+        cache = list(SeqIO.parse(str(data_file), 'fasta'))
+        num_examples = len(cache)
+        self._cache = cache
+        # else:
+            # records = SeqIO.index(str(data_file), 'fasta')
+            # num_examples = len(records)
+#
+            # if num_examples < 10000:
+                # logger.info("Reading full fasta file into memory because number of examples "
+                            # "is very low. This loads data approximately 20x faster.")
+                # in_memory = True
+                # cache = list(records.values())
+                # self._cache = cache
+            # else:
+                # self._records = records
+                # self._keys = list(records.keys())
 
         self._in_memory = in_memory
         self._num_examples = num_examples
@@ -88,13 +88,13 @@ class FastaDataset(Dataset):
         if not 0 <= index < self._num_examples:
             raise IndexError(index)
 
-        if self._in_memory and self._cache[index] is not None:
-            record = self._cache[index]
-        else:
-            key = self._keys[index]
-            record = self._records[key]
-            if self._in_memory:
-                self._cache[index] = record
+        # if self._in_memory and self._cache[index] is not None:
+        record = self._cache[index]
+        # else:
+            # key = self._keys[index]
+            # record = self._records[key]
+            # if self._in_memory:
+                # self._cache[index] = record
 
         item = {'id': record.id,
                 'primary': str(record.seq),
