@@ -204,7 +204,7 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
                  local_rank: int,
                  batch_size: int,
                  n_gpu: int = 1,
-                 gradient_accumulation_steps: int = 1):
+                 gradient_accumulation_steps: typing.Optional[int] = None):
         self._local_rank = local_rank
         self._batch_size = batch_size
         self._n_gpu = n_gpu
@@ -217,18 +217,30 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
         exc_args = exc_value.args if exc_value is not None else None
         if exc_args and 'CUDA out of memory' in exc_args[0]:
             eff_ngpu = get_effective_num_gpus(self._local_rank, self._n_gpu)
-            eff_batch_size = get_effective_batch_size(
-                self._batch_size, self._local_rank, self._n_gpu,
-                self._gradient_accumulation_steps)
-            message = (f"CUDA out of memory. Increase gradient_accumulation_steps to "
-                       f"divide each batch over more forward passes.\n\n"
-                       f"\tHyperparameters:\n"
-                       f"\t\tbatch_size per backward-pass: {self._batch_size}\n"
-                       f"\t\tgradient_accumulation_steps: "
-                       f"{self._gradient_accumulation_steps}\n"
-                       f"\t\tn_gpu: {eff_ngpu}\n"
-                       f"\t\tbatch_size per (gpu * forward-pass): "
-                       f"{eff_batch_size}")
+            if self._gradient_accumulation_steps is not None:
+                eff_batch_size = get_effective_batch_size(
+                    self._batch_size, self._local_rank, self._n_gpu,
+                    self._gradient_accumulation_steps)
+                message = (f"CUDA out of memory. Reduce batch size or increase "
+                           f"gradient_accumulation_steps to divide each batch over more "
+                           f"forward passes.\n\n"
+                           f"\tHyperparameters:\n"
+                           f"\t\tbatch_size per backward-pass: {self._batch_size}\n"
+                           f"\t\tgradient_accumulation_steps: "
+                           f"{self._gradient_accumulation_steps}\n"
+                           f"\t\tn_gpu: {eff_ngpu}\n"
+                           f"\t\tbatch_size per (gpu * forward-pass): "
+                           f"{eff_batch_size}")
+            else:
+                eff_batch_size = get_effective_batch_size(
+                    self._batch_size, self._local_rank, self._n_gpu)
+                message = (f"CUDA out of memory. Reduce batch size to fit each "
+                           f"iteration in memory.\n\n"
+                           f"\tHyperparameters:\n"
+                           f"\t\tbatch_size per forward-pass: {self._batch_size}\n"
+                           f"\t\tn_gpu: {eff_ngpu}\n"
+                           f"\t\tbatch_size per (gpu * forward-pass): "
+                           f"{eff_batch_size}")
             raise RuntimeError(message)
         return False
 

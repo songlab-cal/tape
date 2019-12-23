@@ -637,24 +637,25 @@ def run_embed(model_type: str,
     valid_loader = utils.setup_loader(dataset, batch_size, local_rank, n_gpu, 1, num_workers)
 
     with utils.IncrementalNPZ(out_file) as npzfile:
-        for batch in tqdm(valid_loader, total=len(valid_loader)):
-            outputs = runner.forward(batch, no_loss=True)
-            ids = batch['ids']
-            sequence_embed = outputs[0]
-            pooled_embed = outputs[1]
-            sequence_lengths = batch['input_mask'].sum(1)
-            sequence_embed = sequence_embed.cpu().numpy()
-            pooled_embed = pooled_embed.cpu().numpy()
-            sequence_lengths = sequence_lengths.cpu().numpy()
+        with utils.wrap_cuda_oom_error(local_rank, batch_size, n_gpu):
+            for batch in tqdm(valid_loader, total=len(valid_loader)):
+                outputs = runner.forward(batch, no_loss=True)
+                ids = batch['ids']
+                sequence_embed = outputs[0]
+                pooled_embed = outputs[1]
+                sequence_lengths = batch['input_mask'].sum(1)
+                sequence_embed = sequence_embed.cpu().numpy()
+                pooled_embed = pooled_embed.cpu().numpy()
+                sequence_lengths = sequence_lengths.cpu().numpy()
 
-            for seqembed, poolembed, length, protein_id in zip(
-                    sequence_embed, pooled_embed, sequence_lengths, ids):
-                seqembed = seqembed[:length]
-                arrays = {'pooled': poolembed}
-                if not full_sequence_embed:
-                    # avgpool across the sequence
-                    arrays['avg'] = seqembed.mean(0)
-                else:
-                    arrays['seq'] = seqembed
-                to_save = {protein_id: arrays}
-                npzfile.savez(**to_save)
+                for seqembed, poolembed, length, protein_id in zip(
+                        sequence_embed, pooled_embed, sequence_lengths, ids):
+                    seqembed = seqembed[:length]
+                    arrays = {'pooled': poolembed}
+                    if not full_sequence_embed:
+                        # avgpool across the sequence
+                        arrays['avg'] = seqembed.mean(0)
+                    else:
+                        arrays['seq'] = seqembed
+                    to_save = {protein_id: arrays}
+                    npzfile.savez(**to_save)
