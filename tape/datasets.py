@@ -351,16 +351,16 @@ class LanguageModelingDataset(Dataset):
     def collate_fn(self, batch: List[Any]) -> Dict[str, torch.Tensor]:
         input_ids, input_mask, clan, family = tuple(zip(*batch))
 
-        input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
+        torch_inputs = torch.from_numpy(pad_sequences(input_ids, 0))
         input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         # ignore_index is -1
-        lm_label_ids = torch.from_numpy(pad_sequences(input_ids, -1))
+        torch_labels = torch.from_numpy(pad_sequences(input_ids, -1))
         clan = torch.LongTensor(clan)  # type: ignore
         family = torch.LongTensor(family)  # type: ignore
 
-        return {'input_ids': input_ids,
+        return {'input_ids': torch_inputs,
                 'input_mask': input_mask,
-                'targets': lm_label_ids}
+                'targets': torch_labels}
 
 
 @registry.register_task('fluorescence')
