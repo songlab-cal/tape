@@ -28,6 +28,7 @@ from torch.nn.utils.weight_norm import weight_norm
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 from .file_utils import cached_path
 
@@ -605,10 +606,11 @@ def prune_linear_layer(layer, index, dim=0):
 
 
 def accuracy(logits, labels, ignore_index: int = -100):
-    valid_mask = (labels != ignore_index)
-    predictions = logits.float().argmax(-1)
-    correct = (predictions == labels) * valid_mask
-    return correct.sum().float() / valid_mask.sum().float()
+    with torch.no_grad():
+        valid_mask = (labels != ignore_index)
+        predictions = logits.float().argmax(-1)
+        correct = (predictions == labels) * valid_mask
+        return correct.sum().float() / valid_mask.sum().float()
 
 
 def gelu(x):
@@ -755,7 +757,9 @@ class MLMHead(nn.Module):
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             masked_lm_loss = loss_fct(
                 hidden_states.view(-1, self.vocab_size), targets.view(-1))
-            outputs = (masked_lm_loss,) + outputs
+            metrics = {'perplexity': torch.exp(masked_lm_loss)}
+            loss_and_metrics = (masked_lm_loss, metrics)
+            outputs = (loss_and_metrics,) + outputs
         return outputs  # (loss), prediction_scores
 
 
@@ -787,7 +791,9 @@ class SequenceClassificationHead(nn.Module):
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss()
             classification_loss = loss_fct(logits, targets)
-            outputs = (classification_loss,) + outputs
+            metrics = {'accuracy': accuracy(logits, targets)}
+            loss_and_metrics = (classification_loss, metrics)
+            outputs = (loss_and_metrics,) + outputs
 
         return outputs  # (loss), logits
 
@@ -811,7 +817,11 @@ class SequenceToSequenceClassificationHead(nn.Module):
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             classification_loss = loss_fct(
                 sequence_logits.view(-1, self.num_labels), targets.view(-1))
-            outputs = (classification_loss,) + outputs
+            acc_fct = Accuracy(ignore_index=self._ignore_index)
+            metrics = {'accuracy':
+                       acc_fct(sequence_logits.view(-1, self.num_labels), targets.view(-1))}
+            loss_and_metrics = (classification_loss, metrics)
+            outputs = (loss_and_metrics,) + outputs
         return outputs  # (loss), sequence_logits
 
 
@@ -823,7 +833,7 @@ class PairwiseContactPredictionHead(nn.Module):
             nn.Dropout(), nn.Linear(2 * hidden_size, 2))
         self._ignore_index = ignore_index
 
-    def forward(self, inputs, targets=None):
+    def forward(self, inputs, sequence_lengths, targets=None):
         prod = inputs[:, :, None, :] * inputs[:, None, :, :]
         diff = inputs[:, :, None, :] - inputs[:, None, :, :]
         pairwise_features = torch.cat((prod, diff), -1)
@@ -836,6 +846,29 @@ class PairwiseContactPredictionHead(nn.Module):
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             contact_loss = loss_fct(
                 prediction.view(-1, 2), targets.view(-1))
-            outputs = (contact_loss,) + outputs
+            metrics = {'precision_at_l5':
+                       self.compute_precision_at_l5(sequence_lengths, prediction, targets)}
+            loss_and_metrics = (contact_loss, metrics)
+            outputs = (loss_and_metrics,) + outputs
 
         return outputs
+
+    def compute_precision_at_l5(self, sequence_lengths, prediction, labels):
+        with torch.no_grad():
+            sequence_lengths = sequence_lengths - 2  # remove 2 for start + end tokens
+            valid_mask = labels != self._ignore_index
+            max_seqlen = sequence_lengths.max()
+            seqpos = torch.arange(max_seqlen, device=sequence_lengths.device)
+            x_ind, y_ind = torch.meshgrid(seqpos, seqpos)
+            valid_mask &= ((y_ind - x_ind) >= 6).unsqueeze(0)
+            probs = F.softmax(prediction, 3)[:, :, :, 1]
+            valid_mask = valid_mask.type_as(probs)
+            correct = 0
+            total = 0
+            for length, prob, label, mask in zip(sequence_lengths, probs, labels, valid_mask):
+                masked_prob = (prob * mask).view(-1)
+                most_likely = masked_prob.topk(length // 5, sorted=False)
+                selected = label.view(-1).gather(0, most_likely.indices)
+                correct += selected.sum().float()
+                total += selected.numel()
+            return correct / total
