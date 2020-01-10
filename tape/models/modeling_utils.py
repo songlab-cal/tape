@@ -855,10 +855,8 @@ class PairwiseContactPredictionHead(nn.Module):
 
     def compute_precision_at_l5(self, sequence_lengths, prediction, labels):
         with torch.no_grad():
-            sequence_lengths = sequence_lengths - 2  # remove 2 for start + end tokens
             valid_mask = labels != self._ignore_index
-            max_seqlen = sequence_lengths.max()
-            seqpos = torch.arange(max_seqlen, device=sequence_lengths.device)
+            seqpos = torch.arange(valid_mask.size(1), device=sequence_lengths.device)
             x_ind, y_ind = torch.meshgrid(seqpos, seqpos)
             valid_mask &= ((y_ind - x_ind) >= 6).unsqueeze(0)
             probs = F.softmax(prediction, 3)[:, :, :, 1]

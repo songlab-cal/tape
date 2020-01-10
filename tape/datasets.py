@@ -144,10 +144,10 @@ class LMDBDataset(Dataset):
         else:
             with self._env.begin(write=False) as txn:
                 item = pkl.loads(txn.get(str(index).encode()))
+                if 'id' not in item:
+                    item['id'] = str(index)
                 if self._in_memory:
                     self._cache[index] = item
-        if 'id' not in item:
-            item['id'] = str(index)
         return item
 
 
@@ -514,6 +514,7 @@ class ProteinnetDataset(Dataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
+        protein_length = len(item['primary'])
         token_ids = self.tokenizer.encode(item['primary'])
         input_mask = np.ones_like(token_ids)
 
@@ -525,17 +526,19 @@ class ProteinnetDataset(Dataset):
         invalid_mask |= np.abs(yind - xind) < 6
         contact_map[invalid_mask] = -1
 
-        return token_ids, input_mask, contact_map
+        return token_ids, input_mask, contact_map, protein_length
 
     def collate_fn(self, batch: List[Tuple[Any, ...]]) -> Dict[str, torch.Tensor]:
-        input_ids, input_mask, contact_labels = tuple(zip(*batch))
+        input_ids, input_mask, contact_labels, protein_length = tuple(zip(*batch))
         input_ids = torch.from_numpy(pad_sequences(input_ids, 0))
         input_mask = torch.from_numpy(pad_sequences(input_mask, 0))
         contact_labels = torch.from_numpy(pad_sequences(contact_labels, -1))
+        protein_length = torch.LongTensor(protein_length)  # type: ignore
 
         return {'input_ids': input_ids,
                 'input_mask': input_mask,
-                'targets': contact_labels}
+                'targets': contact_labels,
+                'protein_length': protein_length}
 
 
 @registry.register_task('secondary_structure', num_labels=3)

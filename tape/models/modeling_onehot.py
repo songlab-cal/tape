@@ -145,11 +145,11 @@ class ProteinOneHotForContactPrediction(ProteinOneHotAbstractModel):
 
         self.init_weights()
 
-    def forward(self, input_ids, input_mask=None, targets=None):
+    def forward(self, input_ids, protein_length, input_mask=None, targets=None):
 
         outputs = self.onehot(input_ids, input_mask=input_mask)
 
         sequence_output, pooled_output = outputs[:2]
-        outputs = self.predict(sequence_output, targets) + outputs[2:]
+        outputs = self.predict(sequence_output, protein_length, targets) + outputs[2:]
         # (loss), prediction_scores, (hidden_states), (attentions)
         return outputs
