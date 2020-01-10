@@ -1,3 +1,5 @@
+
+
 # Tasks Assessing Protein Embeddings (TAPE)
 
 ![](https://github.com/songlab-cal/tape/workflows/Build/badge.svg)
@@ -16,7 +18,10 @@ Some documentation is incomplete. We will try to fill it in over time, but if th
 * [Examples](#examples)
    * [Huggingface API for Loading Pretrained Models](#huggingface-api-for-loading-pretrained-models)
    * [Embedding Proteins with a Pretrained Model](#embedding-proteins-with-a-pretrained-model)
-   * [Training a Model](#training-a-model)
+   * [Training a Language Model](#training-a-language-model)
+   * [Evaluating a Language Model](#evaluating-a-language-model)
+   * [Training a Downstream Model](#training-a-downstream-model)
+   * [Evaluating a Downstream Model](#evaluating-a-downstream-model)
    * [List of Models and Tasks](#list-of-models-and-tasks)
    * [Adding New Models and Tasks](#adding-new-models-and-tasks)
 * [Data](#data)
@@ -106,7 +111,7 @@ By default to save memory TAPE returns the average of the sequence embedding alo
 
 If you would like the full embedding rather than the average embedding, this can be specified to `tape-embed` by passing the `--full_sequence_embed` flag.
 
-### Training a Model
+### Training a Language Model
 
 Tape provides two commands for training, `tape-train` and `tape-train-distributed`. The first command uses standard pytorch data distribution to distributed across all available GPUs. The second one uses `torch.distributed.launch`-style multiprocessing to distributed across the number of specified GPUs (and could also be used for distributing across multiple nodes). We generally recommend using the second command, as it can provide a 10-15% speedup, but both will work.
 
@@ -127,6 +132,57 @@ There are a number of features used in training:
 The first feature you are likely to need is the `gradient_accumulation_steps`. TAPE specifies a relatively high batch size (1024) by default. This is the batch size that will be used *per backwards pass*. This number will be divided by the number of GPUs as well as the gradient accumulation steps. So with a batch size of 1024, 2 GPUs, and 1 gradient accumulation step, you will do 512 examples per GPU. If you run out of memory (and you likely will), TAPE provides a clear error message and will tell you to increase the gradient accumulation steps.
 
 There are additional features as well that are not talked about here. See `tape-train-distributed --help` for a list of all commands.
+
+### Evaluating a Language Model
+
+Once you've trained a language model, you'll have a pretrained weight file located in the `results` folder. To evaluate this model, you can do one of two things. One option is to directly evaluate the language modeling accuracy / perplexity. `tape-train` will report the perplexity over the training and validation set at the end of each epoch. However, we find empirically that language modeling accuracy and perplexity are poor measures of performance on downstream tasks. Therefore, to evaluate the language model we strongly recommend training your model on one or all of our provided tasks.
+
+### Training a Downstream Model
+
+Training a model on a downstream task can also be done with the `tape-train` command. Simply use the same syntax as with training a language model, adding the flag `--from_pretrained <path_to_your_saved_results>`. To train a pretrained transformer on secondary structure prediction, for example, you would run
+
+```bash
+tape-train-distributed transformer secondary_structure \
+	--from_pretrained results/<path_to_folder> \
+	--batch_size BS \
+	--learning_rate LR \
+	--fp16 \
+  --warmup_steps WS \
+  --nproc_per_node NGPU \
+  --gradient_accumulation_steps NSTEPS \
+  --num_train_epochs NEPOCH \
+  --eval_freq EF \
+  --save_freq SF
+```
+
+For training a downstream model, you will likely need to experiment with hyperparameters to achieve the best results (optimal hyperparameters vary per-task and per-model). The set of parameters to consider are
+
+```
+* Batch size
+* Learning rate
+* Warmup steps
+* Num train epochs
+```
+
+These can all have significant effects on performance, and by default are set to maximize performance on language modeling rather than downstream tasks. In addition the `eval_freq` and `save_freq` parameters can be useful, as they reduce the frequency of running validation passes and saving the model, respectively. Since downstream task epochs are much shorter (and you're likely to need more of them), it makes sense to increase these values so that training takes less time.
+
+### Evaluating a Downstream Model
+
+To evaluate your downstream task model, we provide the `tape-eval` command. This command will output your model predictions along with a set of metrics that you specify. At the moment, we support  mean squared error (`mse`), mean absolute error (`mae`), Spearman's rho (`spearmanr`), and accuracy (`accuracy`). Precision @ L/5 will be added shortly.
+
+The syntax for the command is
+
+```bash
+tape-eval MODEL TASK TRAINED_MODEL_FOLDER --metrics METRIC1 METRIC2 ...
+```
+
+so to evaluate a transformer trained on trained secondary structure, we can run
+
+```bash
+tape-eval transformer secondary_structure results/<path_to_trained_model> --metrics accuracy
+```
+
+This will report the overall accuracy, and will also dump a `results.pkl` file into the trained model directory for you to analyze however you like.
 
 ### List of Models and Tasks
 

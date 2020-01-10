@@ -8,7 +8,6 @@ import inspect
 import pickle as pkl
 
 from tqdm import tqdm
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -367,26 +366,19 @@ def _get_outputs_to_save(batch, outputs):
 
 def run_eval_epoch(eval_loader: DataLoader,
                    runner: ForwardRunner,
-                   is_master: bool = True) -> typing.List[typing.Tuple[np.ndarray, np.ndarray]]:
-    num_batches = len(eval_loader)
-    accumulator = utils.MetricsAccumulator()
+                   is_master: bool = True) -> typing.List[typing.Dict[str, typing.Any]]:
     torch.set_grad_enabled(False)
     runner.eval()
 
     save_outputs = []
 
-    for batch in tqdm(eval_loader, desc='Evaluation', total=num_batches,
+    for batch in tqdm(eval_loader, desc='Evaluation', total=len(eval_loader),
                       disable=not is_master):
         loss, metrics, outputs = runner.forward(batch, return_outputs=True)  # type: ignore
-        accumulator.update(loss, metrics)
-        save_outputs.append(_get_outputs_to_save(batch, outputs))
-
-    eval_loss = utils.reduce_scalar(accumulator.final_loss())
-    final_print_str = f"Evaluation: [Loss: {eval_loss:.5g}]"
-    for name, value in accumulator.final_metrics().items():
-        value = utils.reduce_scalar(value)
-        final_print_str += f"[{name.capitalize()}: {value:.5g}]"
-    logger.info(final_print_str)
+        predictions = outputs[1].cpu().numpy()
+        targets = batch['targets'].cpu().numpy()
+        for pred, target in zip(predictions, targets):
+            save_outputs.append({'prediction': pred, 'target': target})
 
     return save_outputs
 
@@ -559,7 +551,6 @@ def run_eval(model_type: str,
              tokenizer: str = 'iupac',
              num_workers: int = 8,
              debug: bool = False,
-             # save_callback: typing.Tuple[str, ...] = (),
              metrics: typing.Tuple[str, ...] = (),
              log_level: typing.Union[str, int] = logging.INFO) -> typing.Dict[str, float]:
 
@@ -584,17 +575,14 @@ def run_eval(model_type: str,
         valid_dataset, batch_size, local_rank, n_gpu,
         1, num_workers)
 
-    # save_callbacks = [registry.get_callback(name) for name in save_callback]
-
-    # if len(metrics) > 0 and 'save_predictions' not in save_callback:
-        # save_callbacks.append(registry.get_callback('save_predictions'))
     metric_functions = [registry.get_metric(name) for name in metrics]
-
     save_outputs = run_eval_epoch(valid_loader, runner, is_master)
+    target = [el['target'] for el in save_outputs]
+    prediction = [el['prediction'] for el in save_outputs]
 
-    metrics_to_save = {name: metric(save_outputs)
+    metrics_to_save = {name: metric(target, prediction)
                        for name, metric in zip(metrics, metric_functions)}
-    logger.info(f'Evaluation Metrics: {metrics}')
+    logger.info(''.join(f'{name}: {val}' for name, val in metrics_to_save.items()))
 
     with (pretrained_dir / 'results.pkl').open('wb') as f:
         pkl.dump((metrics_to_save, save_outputs), f)
