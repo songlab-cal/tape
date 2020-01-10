@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Sequence, Union
 import numpy as np
 import scipy.stats
 
@@ -30,27 +30,19 @@ def spearmanr(target: Sequence[float],
 
 
 @registry.register_metric('accuracy')
-def accuracy(labels: Sequence[int],
-             scores: Sequence[float]) -> float:
-    label_array = np.asarray(labels)
-    scores_array = np.asarray(scores)
-    predictions = np.argmax(scores_array, -1)
-    return np.mean(label_array == predictions)
-
-
-@registry.register_metric('sequence_accuracy')
-def sequence_accuracy(labels: Sequence[Sequence[int]],
-                      scores: Sequence[Sequence[float]]) -> float:
-    correct = 0
-    total = 0
-    for label, score in zip(labels, scores):
-        label_array = np.asarray(label)
-        scores_array = np.asarray(score)
-        predictions = np.argmax(scores_array, -1)
-        mask = label_array != -1
-        is_correct = label_array[mask] == predictions[mask]
-
-        correct += is_correct.sum()
-        total += is_correct.size
-
-    return correct / total
+def accuracy(target: Union[Sequence[int], Sequence[Sequence[int]]],
+             prediction: Union[Sequence[float], Sequence[Sequence[float]]]) -> float:
+    if isinstance(target[0], int):
+        # non-sequence case
+        return np.mean(np.asarray(target) == np.asarray(prediction).argmax(-1))
+    else:
+        correct = 0
+        total = 0
+        for label, score in zip(target, prediction):
+            label_array = np.asarray(label)
+            pred_array = np.asarray(score).argmax(-1)
+            mask = label_array != -1
+            is_correct = label_array[mask] == pred_array[mask]
+            correct += is_correct.sum()
+            total += is_correct.size
+        return correct / total
