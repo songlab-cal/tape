@@ -245,6 +245,26 @@ class wrap_cuda_oom_error(contextlib.ContextDecorator):
         return False
 
 
+def write_lmdb(filename: str, iterable: typing.Iterable, map_size: int = 2 ** 20):
+    """Utility for writing a dataset to an LMDB file.
+
+    Args:
+        filename (str): Output filename to write to
+        iterable (Iterable): An iterable dataset to write to. Entries must be pickleable.
+        map_size (int, optional): Maximum allowable size of database in bytes. Required by LMDB.
+            You will likely have to increase this. Default: 1MB.
+    """
+    import lmdb
+    import pickle as pkl
+    env = lmdb.open(filename, map_size=map_size)
+
+    with env.begin(write=True) as txn:
+        for i, entry in enumerate(iterable):
+            txn.put(str(i).encode(), pkl.dumps(entry))
+        txn.put(b'num_examples', pkl.dumps(i + 1))
+    env.close()
+
+
 class IncrementalNPZ(object):
     # Modified npz that allows incremental saving, from https://stackoverflow.com/questions/22712292/how-to-use-numpy-savez-in-a-loop-for-save-more-than-one-array  # noqa: E501
     def __init__(self, file):
