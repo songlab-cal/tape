@@ -118,7 +118,7 @@ Tape provides two commands for training, `tape-train` and `tape-train-distribute
 To train the transformer on masked language modeling, for example, you could run this
 
 ```bash
-tape-train-distributed transformer masked_language_modeling --batch_size BS --learning_rate LR --fp16 --warmup_steps WS --nproc_per_node NGPU --gradient-accumulation-steps NSTEPS
+tape-train-distributed transformer masked_language_modeling --batch_size BS --learning_rate LR --fp16 --warmup_steps WS --nproc_per_node NGPU --gradient_accumulation_steps NSTEPS
 ```
 
 There are a number of features used in training:
@@ -147,12 +147,12 @@ tape-train-distributed transformer secondary_structure \
 	--batch_size BS \
 	--learning_rate LR \
 	--fp16 \
-  --warmup_steps WS \
-  --nproc_per_node NGPU \
-  --gradient_accumulation_steps NSTEPS \
-  --num_train_epochs NEPOCH \
-  --eval_freq EF \
-  --save_freq SF
+  	--warmup_steps WS \
+  	--nproc_per_node NGPU \
+  	--gradient_accumulation_steps NSTEPS \
+  	--num_train_epochs NEPOCH \
+  	--eval_freq EF \
+  	--save_freq SF
 ```
 
 For training a downstream model, you will likely need to experiment with hyperparameters to achieve the best results (optimal hyperparameters vary per-task and per-model). The set of parameters to consider are
