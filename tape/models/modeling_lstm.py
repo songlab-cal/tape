@@ -124,7 +124,7 @@ class ProteinLSTMEncoder(nn.Module):
                 seq = F.pad(seq, [0, 0, 0, sequence.size(1) - seqlen])
                 reversed_sequence.append(seq)
             reversed_sequence = torch.stack(reversed_sequence, 0)
-            return reversed_sequence
+        return reversed_sequence
 
 
 class ProteinLSTMAbstractModel(ProteinModel):
