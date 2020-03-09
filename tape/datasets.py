@@ -1,4 +1,4 @@
-from typing import Union, List, Tuple, Sequence, Dict, Any
+from typing import Union, List, Tuple, Sequence, Dict, Any, Optional, Collection
 from copy import copy
 from pathlib import Path
 import pickle as pkl
@@ -8,6 +8,7 @@ import random
 import lmdb
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
@@ -27,14 +28,23 @@ def dataset_factory(data_file: Union[str, Path], *args, **kwargs) -> Dataset:
         return FastaDataset(data_file, *args, **kwargs)
     elif data_file.suffix == '.json':
         return JSONDataset(data_file, *args, **kwargs)
+    elif data_file.is_dir():
+        return NPZDataset(data_file, *args, **kwargs)
     else:
         raise ValueError(f"Unrecognized datafile type {data_file.suffix}")
 
 
-def pad_sequences(sequences: Sequence[np.ndarray], constant_value=0) -> np.ndarray:
+def pad_sequences(sequences: Sequence, constant_value=0, dtype=None) -> np.ndarray:
     batch_size = len(sequences)
     shape = [batch_size] + np.max([seq.shape for seq in sequences], 0).tolist()
-    array = np.zeros(shape, sequences[0].dtype) + constant_value
+
+    if dtype is None:
+        dtype = sequences[0].dtype
+
+    if isinstance(sequences[0], np.ndarray):
+        array = np.full(shape, constant_value, dtype=dtype)
+    elif isinstance(sequences[0], torch.Tensor):
+        array = torch.full(shape, constant_value, dtype=dtype)
 
     for arr, seq in zip(array, sequences):
         arrslice = tuple(slice(dim) for dim in seq.shape)
@@ -186,6 +196,57 @@ class JSONDataset(Dataset):
                             f"records, received record of type {type(item)}")
         if 'id' not in item:
             item['id'] = str(index)
+        return item
+
+
+class NPZDataset(Dataset):
+    """Creates a dataset from a directory of npz files.
+    Args:
+        data_file (Union[str, Path]): Path to directory of npz files
+        in_memory (bool): Dummy variable to match API of other datasets
+    """
+
+    def __init__(self,
+                 data_file: Union[str, Path],
+                 in_memory: bool = True,
+                 split_files: Optional[Collection[str]] = None):
+        data_file = Path(data_file)
+        if not data_file.exists():
+            raise FileNotFoundError(data_file)
+        if not data_file.is_dir():
+            raise NotADirectoryError(data_file)
+        file_glob = data_file.glob('*.npz')
+        if split_files is None:
+            file_list = list(file_glob)
+        else:
+            split_files = set(split_files)
+            if len(split_files) == 0:
+                raise ValueError("Passed an empty split file set")
+
+            file_list = [f for f in file_glob if f.name in split_files]
+            if len(file_list) != len(split_files):
+                num_missing = len(split_files) - len(file_list)
+                raise FileNotFoundError(
+                    f"{num_missing} specified split files not found in directory")
+
+        if len(file_list) == 0:
+            raise FileNotFoundError(f"No .npz files found in {data_file}")
+
+        self._file_list = file_list
+
+    def __len__(self) -> int:
+        return len(self._file_list)
+
+    def __getitem__(self, index: int):
+        if not 0 <= index < len(self):
+            raise IndexError(index)
+
+        item = dict(np.load(self._file_list[index]))
+        if not isinstance(item, dict):
+            raise TypeError(f"Expected dataset to contain a list of dictionary "
+                            f"records, received record of type {type(item)}")
+        if 'id' not in item:
+            item['id'] = self._file_list[index].stem
         return item
 
 
@@ -587,3 +648,199 @@ class SecondaryStructureDataset(Dataset):
                   'targets': ss_label}
 
         return output
+
+
+@registry.register_task('trrosetta')
+class TRRosettaDataset(Dataset):
+
+    def __init__(self,
+                 data_path: Union[str, Path],
+                 split: str,
+                 tokenizer: Union[str, TAPETokenizer] = 'iupac',
+                 in_memory: bool = False,
+                 max_seqlen: int = 300):
+        if split not in ('train', 'valid'):
+            raise ValueError(
+                f"Unrecognized split: {split}. "
+                f"Must be one of ['train', 'valid']")
+        if isinstance(tokenizer, str):
+            tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
+
+        data_path = Path(data_path)
+        data_path = data_path / 'trrosetta'
+        split_files = (data_path / f'{split}_files.txt').read_text().split()
+        self.data = NPZDataset(data_path / 'npz', in_memory, split_files=split_files)
+
+        self._dist_bins = np.arange(2, 20.1, 0.5)
+        self._dihedral_bins = (15 + np.arange(-180, 180, 15)) / 180 * np.pi
+        self._planar_bins = (15 + np.arange(0, 180, 15)) / 180 * np.pi
+        self._split = split
+        self.max_seqlen = max_seqlen
+        self.msa_cutoff = 0.8
+        self.penalty_coeff = 4.5
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    def __getitem__(self, index):
+        item = self.data[index]
+
+        msa = item['msa']
+        dist = item['dist6d']
+        omega = item['omega6d']
+        theta = item['theta6d']
+        phi = item['phi6d']
+
+        if self._split == 'train':
+            msa = self._subsample_msa(msa)
+        elif self._split == 'valid':
+            msa = msa[:20000]  # runs out of memory if msa is way too big
+        msa, dist, omega, theta, phi = self._slice_long_sequences(
+            msa, dist, omega, theta, phi)
+
+        mask = dist == 0
+
+        dist_bins = np.digitize(dist, self._dist_bins)
+        omega_bins = np.digitize(omega, self._dihedral_bins) + 1
+        theta_bins = np.digitize(theta, self._dihedral_bins) + 1
+        phi_bins = np.digitize(phi, self._planar_bins) + 1
+
+        dist_bins[mask] = 0
+        omega_bins[mask] = 0
+        theta_bins[mask] = 0
+        phi_bins[mask] = 0
+
+        dist_bins[np.diag_indices_from(dist_bins)] = -1
+
+        # input_mask = np.ones_like(msa[0])
+
+        return msa, dist_bins, omega_bins, theta_bins, phi_bins
+
+    def _slice_long_sequences(self, msa, dist, omega, theta, phi):
+        seqlen = msa.shape[1]
+        if self.max_seqlen > 0 and seqlen > self.max_seqlen:
+            start = np.random.randint(seqlen - self.max_seqlen + 1)
+            end = start + self.max_seqlen
+
+            msa = msa[:, start:end]
+            dist = dist[start:end, start:end]
+            omega = omega[start:end, start:end]
+            theta = theta[start:end, start:end]
+            phi = phi[start:end, start:end]
+
+        return msa, dist, omega, theta, phi
+
+    def _subsample_msa(self, msa):
+        num_alignments, seqlen = msa.shape
+
+        if num_alignments < 10:
+            return msa
+
+        num_sample = int(10 ** np.random.uniform(np.log10(num_alignments)) - 10)
+
+        if num_sample <= 0:
+            return msa[0][None, :]
+        elif num_sample > 20000:
+            num_sample = 20000
+
+        indices = np.random.choice(
+            msa.shape[0] - 1, size=num_sample, replace=False) + 1
+        indices = np.pad(indices, [1, 0], 'constant')  # add the sequence back in
+        return msa[indices]
+
+    def collate_fn(self, batch):
+        msa, dist_bins, omega_bins, theta_bins, phi_bins = tuple(zip(*batch))
+        # features = pad_sequences([self.featurize(msa_) for msa_ in msa], 0)
+        msa1hot = pad_sequences(
+            [F.one_hot(torch.LongTensor(msa_), 21) for msa_ in msa], 0, torch.float)
+        # input_mask = torch.FloatTensor(pad_sequences(input_mask, 0))
+        dist_bins = torch.LongTensor(pad_sequences(dist_bins, -1))
+        omega_bins = torch.LongTensor(pad_sequences(omega_bins, 0))
+        theta_bins = torch.LongTensor(pad_sequences(theta_bins, 0))
+        phi_bins = torch.LongTensor(pad_sequences(phi_bins, 0))
+
+        return {'msa1hot': msa1hot,
+                # 'input_mask': input_mask,
+                'dist': dist_bins,
+                'omega': omega_bins,
+                'theta': theta_bins,
+                'phi': phi_bins}
+
+    def featurize(self, msa):
+        msa = torch.LongTensor(msa)
+        msa1hot = F.one_hot(msa, 21).float()
+
+        seqlen = msa1hot.size(1)
+
+        weights = self.reweight(msa1hot)
+        features_1d = self.extract_features_1d(msa1hot, weights)
+        features_2d = self.extract_features_2d(msa1hot, weights)
+
+        features = torch.cat((
+            features_1d.unsqueeze(1).repeat(1, seqlen, 1),
+            features_1d.unsqueeze(0).repeat(seqlen, 1, 1),
+            features_2d), -1)
+
+        features = features.permute(2, 0, 1)
+
+        return features
+
+    def reweight(self, msa1hot):
+        # Reweight
+        seqlen = msa1hot.size(1)
+        id_min = seqlen * self.msa_cutoff
+        id_mtx = torch.tensordot(msa1hot, msa1hot, [[1, 2], [1, 2]])
+        id_mask = id_mtx > id_min
+        weights = 1.0 / id_mask.float().sum(-1)
+        return weights
+
+    def extract_features_1d(self, msa1hot, weights):
+        # 1D Features
+        seqlen = msa1hot.size(1)
+        f1d_seq = msa1hot[0, :, :20]
+
+        # msa2pssm
+        beff = weights.sum()
+        f_i = (weights[:, None, None] * msa1hot).sum(0) / beff + 1e-9
+        h_i = (-f_i * f_i.log()).sum(1, keepdims=True)
+        f1d_pssm = torch.cat((f_i, h_i), dim=1)
+
+        f1d = torch.cat((f1d_seq, f1d_pssm), dim=1)
+        f1d = f1d.view(seqlen, 42)
+        return f1d
+
+    def extract_features_2d(self, msa1hot, weights):
+        # 2D Features
+        num_alignments = msa1hot.size(0)
+        seqlen = msa1hot.size(1)
+        num_symbols = 21
+        if num_alignments == 1:
+            # No alignments, predict from sequence alone
+            f2d_dca = torch.zeros(seqlen, seqlen, 442, dtype=torch.float)
+        else:
+            # fast_dca
+
+            # covariance
+            x = msa1hot.view(num_alignments, seqlen * num_symbols)
+            num_points = weights.sum() - weights.mean().sqrt()
+            mean = (x * weights[:, None]).sum(0, keepdims=True) / num_points
+            x = (x - mean) * weights[:, None].sqrt()
+            cov = torch.matmul(x.transpose(-1, -2), x) / num_points
+
+            # inverse covariance
+            reg = torch.eye(seqlen * num_symbols) * self.penalty_coeff / weights.sum().sqrt()
+            cov_reg = cov + reg
+            inv_cov = torch.inverse(cov_reg)
+
+            x1 = inv_cov.view(seqlen, num_symbols, seqlen, num_symbols)
+            x2 = x1.permute(0, 2, 1, 3)
+            features = x2.reshape(seqlen, seqlen, num_symbols * num_symbols)
+
+            x3 = (x1[:, :-1, :, :-1] ** 2).sum((1, 3)).sqrt() * (1 - torch.eye(seqlen))
+            apc = x3.sum(0, keepdims=True) * x3.sum(1, keepdims=True) / x3.sum()
+            contacts = (x3 - apc) * (1 - torch.eye(seqlen))
+
+            f2d_dca = torch.cat([features, contacts[:, :, None]], axis=2)
+
+        return f2d_dca

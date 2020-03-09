@@ -70,7 +70,8 @@ pooled_output = output[1]
 Currently available pretrained models are:
 
 * bert-base (Transformer model)
-* babbler-1900 (UniRep model)
+* babbler-1900 ([UniRep](https://www.biorxiv.org/content/10.1101/589333v1) model)
+* xaa, xab, xac, xad, xae ([trRosetta](https://www.pnas.org/content/117/3/1496) model)
 
 If there is a particular pretrained model that you would like to use, please open an issue and we will try to add it!
 
@@ -184,6 +185,28 @@ tape-eval transformer secondary_structure results/<path_to_trained_model> --metr
 
 This will report the overall accuracy, and will also dump a `results.pkl` file into the trained model directory for you to analyze however you like.
 
+### trRosetta
+
+We have recently re-implemented the trRosetta model from Yang et. al. (2020). A link to the original repository, which was used as a basis for this re-implementation, can be found [here](https://github.com/gjoni/trRosetta). We provide a pytorch implementation and dataset to allow you to play around with the model. Data is available [here](http://s3.amazonaws.com/proteindata/data_pytorch/trrosetta.tar.gz). This is the same as the data in the original paper, however we've added train / val split files to allow you to train your own model reproducibly. To use this model
+
+```python
+from tape import TRRosetta
+from tape.datasets import TRRosettaDataset
+
+# Download data and place it under `<data_path>/trrosetta`
+
+train_data = TRRosettaDatset('<data_path>', 'train')  # will subsample MSAs
+valid_data = TRRosettaDatset('<data_path>', 'valid')  # will not subsample MSAs
+
+model = TRRosetta.from_pretrained('xaa')  # valid choices are 'xaa', 'xab', 'xac', 'xad', 'xae'. Each corresponds to one of the ensemble models.
+
+batch = train_data.collate_fn([train_data[0]])
+loss, predictions = model(**batch)
+```
+
+The predictions can be saved as `.npz` files and then fed into the [structure modeling scripts](https://yanglab.nankai.edu.cn/trRosetta/download/) provided by the Yang Lab.
+
+
 ### List of Models and Tasks
 
 The available models are:
@@ -193,6 +216,7 @@ The available models are:
 - `lstm`
 - `unirep` (pretrained available)
 - `onehot` (no pretraining required)
+- `trrosetta` (pretrained available)
 
 The available standard tasks are:
 
@@ -203,6 +227,7 @@ The available standard tasks are:
 - `remote_homology`
 - `fluorescence`
 - `stability`
+- `trrosetta` (can only be used with `trrosetta` model)
 
 The available models and tasks can be found in `tape/datasets.py` and `tape/models/modeling*.py`.
 
