@@ -24,7 +24,7 @@ def dataset_factory(data_file: Union[str, Path], *args, **kwargs) -> Dataset:
         raise FileNotFoundError(data_file)
     if data_file.suffix == '.lmdb':
         return LMDBDataset(data_file, *args, **kwargs)
-    elif data_file.suffix == '.fasta':
+    elif data_file.suffix in {'.fasta', '.fna', '.ffn', '.faa', '.frn'}:
         return FastaDataset(data_file, *args, **kwargs)
     elif data_file.suffix == '.json':
         return JSONDataset(data_file, *args, **kwargs)
