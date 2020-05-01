@@ -9,6 +9,8 @@ from pathlib import Path
 import importlib
 import pkgutil
 
+__version__ = '0.4'
+
 
 # Import all the models and configs
 for _, name, _ in pkgutil.iter_modules([str(Path(__file__).parent / 'models')]):
