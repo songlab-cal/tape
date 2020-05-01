@@ -8,6 +8,9 @@ with open('README.md', 'r') as rf:
 with open('LICENSE', 'r') as lf:
     LICENSE = lf.read()
 
+with open('requirements.txt', 'r') as reqs:
+    requirements = reqs.read().split()
+
 setup(
     name='tape_proteins',
     packages=find_packages(),
@@ -19,16 +22,7 @@ setup(
     license=LICENSE,
     keywords=['Proteins', 'Deep Learning', 'Pytorch', 'TAPE'],
     include_package_data=True,
-    install_requires=[
-        'torch>=1.0',
-        'tqdm',
-        'tensorboardX',
-        'scipy',
-        'lmdb',
-        'boto3',
-        'requests',
-        'biopython',
-    ],
+    install_requires=requirements,
     entry_points={
         'console_scripts': [
             'tape-train = tape.main:run_train',
