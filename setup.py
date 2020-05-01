@@ -1,5 +1,18 @@
 # -*- coding: utf-8 -*-
 from setuptools import setup, find_packages
+import os
+
+
+def get_version():
+    directory = os.path.abspath(os.path.dirname(__file__))
+    init_file = os.path.join(directory, 'tape', '__init__.py')
+    with open(init_file) as f:
+        for line in f:
+            if line.startswith('__version__'):
+                delim = '"' if '"' in line else "'"
+                return line.split(delim)[1]
+        else:
+            raise RuntimeError("Unable to find version string.")
 
 
 with open('README.md', 'r') as rf:
@@ -14,7 +27,7 @@ with open('requirements.txt', 'r') as reqs:
 setup(
     name='tape_proteins',
     packages=find_packages(),
-    version='0.4',
+    version=get_version(),
     description="Repostory of Protein Benchmarking and Modeling",
     author="Roshan Rao, Nick Bhattacharya, Neil Thomas",
     author_email='roshan_rao@berkeley.edu, nickbhat@berkeley.edu, nthomas@berkeley.edu',
