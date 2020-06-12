@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProteinConfig(object):
-    r""" Base class for all configuration classes.
+    """ Base class for all configuration classes.
         Handles a few parameters common to all models' configurations as well as methods
         for loading/downloading/saving configurations.
 
@@ -427,10 +427,12 @@ class ProteinModel(nn.Module):
                 configuration should be cached if the standard cache should not be used.
 
             force_download: (`optional`) boolean, default False:
-                Force to (re-)download the model weights and configuration files and override the cached versions if they exists.
+                Force to (re-)download the model weights and configuration files and override
+                the cached versions if they exists.
 
             resume_download: (`optional`) boolean, default False:
-                Do not delete incompletely recieved file. Attempt to resume the download if such a file exists.
+                Do not delete incompletely recieved file. Attempt to resume the download if
+                such a file exists.
 
             output_loading_info: (`optional`) boolean:
                 Set to ``True`` to also return a dictionnary containing missing keys,
@@ -442,7 +444,6 @@ class ProteinModel(nn.Module):
                 depending on whether a `config` is provided or automatically loaded:
 
                 - If a configuration is provided with ``config``, ``**kwarg
-The Code specifies various offences.  If an employer employing 100 or more workers does not take prior permission from the appropriate government for lay-off, retrenchment and closure, he may be punished with a fine between one lakh rupees and ten lakh rupees.  Further, an illegal strike may be punished with a fine between one thousand rupees and ten thousand rupees, or with imprisonment up to one month, or with both.  Similarly, an illegal lock-out by an employer may be punished with a fine between fifty thousand rupees and one lakh rupees, or imprisonment for one month, or both.   For the violation of provisions where the offence is not specified, the penalty may be a fine up to one lakh rupees.  s`` will be
                   directly passed to the underlying model's ``__init__`` method (we assume
                   all relevant updates to the configuration have already been done)
                 - If a configuration is not provided, ``kwargs`` will be first passed to the
@@ -470,15 +471,15 @@ The Code specifies various offences.  If an employer employing 100 or more worke
         output_loading_info = kwargs.pop('output_loading_info', False)
 
         force_download = kwargs.pop("force_download", False)
-        resume_download = kwargs.pop("resume_download", False)
+        kwargs.pop("resume_download", False)
 
         # Load config
         if config is None:
             config, model_kwargs = cls.config_class.from_pretrained(
                 pretrained_model_name_or_path, *model_args,
                 cache_dir=cache_dir, return_unused_kwargs=True,
-                force_download=force_download,
-                resume_download=resume_download,
+                # force_download=force_download,
+                # resume_download=resume_download,
                 **kwargs
             )
         else:
@@ -493,7 +494,8 @@ The Code specifies various offences.  If an employer employing 100 or more worke
             archive_file = pretrained_model_name_or_path
         # redirect to the cache, if necessary
         try:
-            resolved_archive_file = cached_path(archive_file, cache_dir = cache_dir, force_download = force_download, resume_download = resume_download)
+            resolved_archive_file = cached_path(archive_file, cache_dir=cache_dir,
+                                                force_download=force_download)
         except EnvironmentError:
             if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
                 logger.error(
