@@ -297,11 +297,9 @@ def get_from_cache(url, cache_dir=None, force_download=False, resume_download=Fa
                     yield f
 
             temp_file_manager = _resumable_file_manager
-            
         else:
             temp_file_manager = partial(tempfile.NamedTemporaryFile, dir=cache_dir,
                                         delete=False)
-        
         # Download to temporary file, then copy to cache dir once finished.
         # Otherwise you get corrupt cache entries if the download gets interrupted.
         with temp_file_manager() as temp_file:
