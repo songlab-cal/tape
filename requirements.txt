@@ -6,3 +6,4 @@ lmdb
 boto3
 requests
 biopython
+filelock

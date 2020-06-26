@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 
 
 class ProteinConfig(object):
-    r""" Base class for all configuration classes.
+    """ Base class for all configuration classes.
         Handles a few parameters common to all models' configurations as well as methods
         for loading/downloading/saving configurations.
 
@@ -426,6 +426,14 @@ class ProteinModel(nn.Module):
                 Path to a directory in which a downloaded pre-trained model
                 configuration should be cached if the standard cache should not be used.
 
+            force_download: (`optional`) boolean, default False:
+                Force to (re-)download the model weights and configuration files and override
+                the cached versions if they exists.
+
+            resume_download: (`optional`) boolean, default False:
+                Do not delete incompletely recieved file. Attempt to resume the download if
+                such a file exists.
+
             output_loading_info: (`optional`) boolean:
                 Set to ``True`` to also return a dictionnary containing missing keys,
                 unexpected keys and error messages.
@@ -435,7 +443,7 @@ class ProteinModel(nn.Module):
                 initiate the model. (e.g. ``output_attention=True``). Behave differently
                 depending on whether a `config` is provided or automatically loaded:
 
-                - If a configuration is provided with ``config``, ``**kwargs`` will be
+                - If a configuration is provided with ``config``, ``**kwarg
                   directly passed to the underlying model's ``__init__`` method (we assume
                   all relevant updates to the configuration have already been done)
                 - If a configuration is not provided, ``kwargs`` will be first passed to the
@@ -462,11 +470,16 @@ class ProteinModel(nn.Module):
         cache_dir = kwargs.pop('cache_dir', None)
         output_loading_info = kwargs.pop('output_loading_info', False)
 
+        force_download = kwargs.pop("force_download", False)
+        kwargs.pop("resume_download", False)
+
         # Load config
         if config is None:
             config, model_kwargs = cls.config_class.from_pretrained(
                 pretrained_model_name_or_path, *model_args,
                 cache_dir=cache_dir, return_unused_kwargs=True,
+                # force_download=force_download,
+                # resume_download=resume_download,
                 **kwargs
             )
         else:
@@ -481,7 +494,8 @@ class ProteinModel(nn.Module):
             archive_file = pretrained_model_name_or_path
         # redirect to the cache, if necessary
         try:
-            resolved_archive_file = cached_path(archive_file, cache_dir=cache_dir)
+            resolved_archive_file = cached_path(archive_file, cache_dir=cache_dir,
+                                                force_download=force_download)
         except EnvironmentError:
             if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
                 logger.error(
