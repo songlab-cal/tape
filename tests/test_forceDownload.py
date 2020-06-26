@@ -11,7 +11,7 @@ def test_forcedownload():
     model = ProteinBertModel.from_pretrained('bert-base')
     url = BERT_PRETRAINED_MODEL_ARCHIVE_MAP['bert-base']
     filename = url_to_filename(url, get_etag(url))
-    wholepath = get_cache() + '/' + filename
+    wholepath = get_cache()/filename
     oldtime = time.ctime(os.path.getmtime(wholepath))
     model = ProteinBertModel.from_pretrained('bert-base', force_download=True)
     newtime = time.ctime(os.path.getmtime(wholepath))
