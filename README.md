@@ -12,6 +12,8 @@ Our paper is available at [https://arxiv.org/abs/1906.08230](https://arxiv.org/a
 
 Some documentation is incomplete. We will try to fill it in over time, but if there is something you would like an explanation for, please open an issue so we know where to focus our effort!
 
+**Update 09/26/2020:** We no longer recommend trying to train directly with TAPE's training code. It will likely still work for some time, but will not be updated for future pytorch versions. Internally, we have been working with different frameworks for training (specifically Pytorch Lightning and Fairseq). We strongly recommend using a framework like these, as it offloads the requirement of maintaining compatability with Pytorch versions. TAPE models will continue to be available, and if the code is working for you, feel free to use it. However we will not be fixing issues regarding multi-GPU errors, OOM erros, etc during training.
+
 ## Contents
 
 * [Installation](#installation)
