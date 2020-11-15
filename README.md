@@ -6,7 +6,7 @@
 
 Data, weights, and code for running the TAPE benchmark on a trained protein embedding. We provide a pretraining corpus, five supervised downstream tasks, pretrained language model weights, and benchmarking code. This code has been updated to use pytorch - as such previous pretrained model weights and code will not work. The previous tensorflow TAPE repository is still available at [https://github.com/songlab-cal/tape-neurips2019](https://github.com/songlab-cal/tape-neurips2019).
 
-This repository is *not* an effort to maintain maximum compatibility and reproducability with the original paper, but is instead meant to facilitate ease of use and future development (both for us, and for the community). Although we provide much of the same functionality, we have not tested every aspect of training on all models/downstream tasks, and we have also made some deliberate changes. Therefore, if your goal is to reproduce the results from our paper, please use the original code.
+This repository is *not* an effort to maintain maximum compatibility and reproducibility with the original paper, but is instead meant to facilitate ease of use and future development (both for us, and for the community). Although we provide much of the same functionality, we have not tested every aspect of training on all models/downstream tasks, and we have also made some deliberate changes. Therefore, if your goal is to reproduce the results from our paper, please use the original code.
 
 Our paper is available at [https://arxiv.org/abs/1906.08230](https://arxiv.org/abs/1906.08230).
 
