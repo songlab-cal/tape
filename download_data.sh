@@ -5,7 +5,7 @@ while true; do
      read -p "Do you wish to download and unzip the pretraining corpus? It is 7.7GB compressed and 19GB uncompressed? [y/n]" yn
      case $yn in
 	    [Yy]* ) wget http://s3.amazonaws.com/proteindata/data_pytorch/pfam.tar.gz; tar -xzf pfam.tar.gz -C ./data; rm pfam.tar.gz; break;;
-            [Nn]* ) exit;;
+            [Nn]* ) break;;
 	    * ) echo "Please answer yes (Y/y) or no (N/n).";;
     esac
 done
