@@ -11,6 +11,8 @@ from .utils import MetricsAccumulator  # noqa: F401
 from .utils import wrap_cuda_oom_error  # noqa: F401
 from .utils import write_lmdb  # noqa: F401
 from .utils import IncrementalNPZ  # noqa: F401
+from .utils import http_get  # noqa: F401
+from .utils import pad_sequences  # noqa: F401
 
 from .setup_utils import setup_logging  # noqa: F401
 from .setup_utils import setup_optimizer  # noqa: F401
