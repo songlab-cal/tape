@@ -384,3 +384,16 @@ def pad_sequences(
         arr[arrslice] = seq
 
     return array
+
+
+def seqlen_mask(
+    inputs: torch.Tensor, lengths: typing.Optional[torch.Tensor]
+) -> typing.Optional[torch.Tensor]:
+    if lengths is None:
+        return None
+    else:
+        indices = torch.arange(
+            inputs.size(1), dtype=lengths.dtype, device=lengths.device
+        )
+        mask = indices.unsqueeze(0) < lengths.unsqueeze(1)
+        return mask

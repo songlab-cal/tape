@@ -1,6 +1,7 @@
 from argparse import ArgumentParser
 import sys
 import logging
+from tape import utils
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
@@ -11,6 +12,10 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
+
+
+def extract_features(model, src_tokens, src_lengths):
+    return model(src_tokens, utils.seqlen_mask(src_tokens, src_lengths))[0][:, 1:-1]
 
 
 def train():
@@ -41,6 +46,7 @@ def train():
     base_model = ProteinBertModel.from_pretrained("bert-base")
     task_model = SecondaryStructurePrediction(
         base_model,
+        extract_features,
         768,
         args.conv_dropout,
         args.lstm_dropout,
