@@ -4,6 +4,11 @@ results/
 pretrained_models/
 wandb/
 scratch/
+tape-fluorescence/
+tape-secondary-structure/
+tape-contact/
+tape-stability/
+tape-remote-homology/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
