@@ -110,7 +110,7 @@ class SecondaryStructureDataset(Dataset):
         return result
 
 
-class SecondaryStructureDatamodule(TAPEDataModule):
+class SecondaryStructureDataModule(TAPEDataModule):
     def __init__(
         self,
         data_dir: PathLike = DEFAULT_DATA_DIR,
@@ -136,9 +136,13 @@ class SecondaryStructureDatamodule(TAPEDataModule):
         return self.make_dataloader(dataset, shuffle=False)
 
     def test_dataloader(self):
-        for test_set in ["cb513", "ts115", "casp12"]:
-            dataset = SecondaryStructureDataset(self.data_dir, test_set, self.tokenizer)
-            yield self.make_dataloader(dataset, shuffle=False)
+        return [
+            self.make_dataloader(
+                SecondaryStructureDataset(self.data_dir, test_set, self.tokenizer),
+                shuffle=False,
+            )
+            for test_set in ["cb513", "ts115", "casp12"]
+        ]
 
 
 class SecondaryStructurePredictor(TAPEPredictorBase):
@@ -170,7 +174,6 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
             lr_scheduler=lr_scheduler,
             warmup_steps=warmup_steps,
             max_steps=max_steps,
-
         )
         self.save_hyperparameters(
             "conv_dropout",
@@ -201,8 +204,12 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
         self.output_names = output_names
         self.output_sizes = output_sizes
 
-        self.ss3_accuracy = pl.metrics.classification.Accuracy()
-        self.ss8_accuracy = pl.metrics.classification.Accuracy()
+        self.ss3_train_accuracy = pl.metrics.classification.Accuracy()
+        self.ss8_train_accuracy = pl.metrics.classification.Accuracy()
+        self.ss3_valid_accuracy = pl.metrics.classification.Accuracy()
+        self.ss8_valid_accuracy = pl.metrics.classification.Accuracy()
+        self.ss3_test_accuracy = pl.metrics.classification.Accuracy()
+        self.ss8_test_accuracy = pl.metrics.classification.Accuracy()
 
     @staticmethod
     def add_args(parser: ArgumentParser) -> ArgumentParser:
@@ -317,14 +324,16 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
 
     def compute_and_log_accuracy(self, outputs, mode: str):
         valid_mask = outputs["target"]["valid_mask"]
-        self.ss3_accuracy(
+        ss3_accuracy = getattr(self, f"ss3_{mode}_accuracy")
+        ss8_accuracy = getattr(self, f"ss8_{mode}_accuracy")
+        ss3_accuracy(
             outputs["Q3"][valid_mask].view(-1, 3), outputs["target"]["Q3"][valid_mask]
         )
-        self.ss8_accuracy(
+        ss8_accuracy(
             outputs["Q8"][valid_mask].view(-1, 8), outputs["target"]["Q8"][valid_mask]
         )
-        self.log(f"ss3_acc/{mode}", self.ss3_accuracy)
-        self.log(f"ss8_acc/{mode}", self.ss8_accuracy)
+        self.log(f"ss3_acc/{mode}", ss3_accuracy)
+        self.log(f"ss8_acc/{mode}", ss8_accuracy)
 
     def training_step(self, batch, batch_idx):
         return self.compute_loss(batch, "train")

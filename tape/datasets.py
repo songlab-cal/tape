@@ -1,4 +1,5 @@
 from typing import Union, List, Tuple, Sequence, Dict, Any, Optional, Collection
+import threading
 from copy import copy
 from pathlib import Path
 import pickle as pkl
@@ -123,22 +124,19 @@ class LMDBDataset(Dataset):
     def __init__(self,
                  data_file: Union[str, Path],
                  in_memory: bool = False):
-
+        self.threadlocal = threading.local()
         data_file = Path(data_file)
         if not data_file.exists():
             raise FileNotFoundError(data_file)
+        self._data_file = data_file
 
-        env = lmdb.open(str(data_file), max_readers=1, readonly=True,
-                        lock=False, readahead=False, meminit=False)
-
-        with env.begin(write=False) as txn:
+        with self.env.begin(write=False) as txn:
             num_examples = pkl.loads(txn.get(b'num_examples'))
 
         if in_memory:
             cache = [None] * num_examples
             self._cache = cache
 
-        self._env = env
         self._in_memory = in_memory
         self._num_examples = num_examples
 
@@ -152,13 +150,32 @@ class LMDBDataset(Dataset):
         if self._in_memory and self._cache[index] is not None:
             item = self._cache[index]
         else:
-            with self._env.begin(write=False) as txn:
+            with self.env.begin(write=False) as txn:
                 item = pkl.loads(txn.get(str(index).encode()))
                 if 'id' not in item:
                     item['id'] = str(index)
                 if self._in_memory:
                     self._cache[index] = item
         return item
+
+    def __getstate__(self):
+        return {k: v for k, v in self.__dict__.items() if k != "threadlocal"}
+
+    def __setstate__(self, state):
+        self.__dict__ = state
+        self.threadlocal = threading.local()
+
+    def __del__(self):
+        if hasattr(self.threadlocal, "env"):
+            self.threadlocal.env.close()
+            del self.threadlocal.env
+
+    @property
+    def env(self) -> lmdb.Environment:
+        if not hasattr(self.threadlocal, "env"):
+            env = lmdb.open(str(self._data_file), readonly=True, lock=False)
+            self.threadlocal.env = env
+        return self.threadlocal.env
 
 
 class JSONDataset(Dataset):

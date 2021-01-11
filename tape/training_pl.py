@@ -8,8 +8,8 @@ from tape import tasks
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
 formatter = logging.Formatter(
-    "%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-    datefmt="%y/%m/%d %H:%M:%S")
+    "%(asctime)s | %(levelname)s | %(name)s | %(message)s", datefmt="%y/%m/%d %H:%M:%S"
+)
 console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
@@ -24,7 +24,7 @@ def get_num_gpus(args: Namespace) -> int:
     try:
         return int(args.gpus)
     except ValueError:
-        return len(args.gpus.split(","))
+        return sum(1 for gpu in args.gpus.split(",") if gpu)
 
 
 def maybe_unset_distributed(args: Namespace) -> None:
@@ -35,13 +35,13 @@ def maybe_unset_distributed(args: Namespace) -> None:
 def train():
     import pytorch_lightning as pl
     from tape.models.modeling_bert import ProteinBertModel
-    from tape.tasks import SecondaryStructureDatamodule, SecondaryStructurePrediction
+
     # Initialize parser
     parser = ArgumentParser()
     parser.add_argument(
         "task",
         choices=["secondary_structure", "fluorescence"],
-        help="Which downstream task to train."
+        help="Which downstream task to train.",
     )
     parser.add_argument(
         "--wandb_project",
@@ -49,21 +49,18 @@ def train():
         default=None,
         help="Optional wandb project to log to.",
     )
-    parser = SecondaryStructureDatamodule.add_args(parser)
     parser = pl.Trainer.add_argparse_args(parser)
-    parser = SecondaryStructurePrediction.add_args(parser)
     parser.set_defaults(
         gpus=1,
         min_steps=50,
-        max_steps=1000,
+        max_steps=50000,
+        distributed_backend="ddp",
     )
-    args = parser.parse_args()
+    args, _ = parser.parse_known_args()
     maybe_unset_distributed(args)
 
-    data = SecondaryStructureDatamodule(
-        args.data_dir, args.batch_size, args.num_workers
-    )
     base_model = ProteinBertModel.from_pretrained("bert-base")
+    task_data, task_model = tasks.get(parser, base_model, extract_features, 768)
 
     kwargs = {}
     if args.wandb_project:
@@ -76,12 +73,24 @@ def train():
             raise ImportError(
                 "Cannot use W&B logger w/o W&b install. Run `pip install wandb` first."
             )
-
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(
+        monitor="loss/valid",
+    )
+    early_stopping_callback = pl.callbacks.EarlyStopping(
+        monitor="loss/valid",
+        patience=3,
+    )
     # Initialize Trainer
-    trainer = pl.Trainer.from_argparse_args(args, **kwargs)
+    trainer = pl.Trainer.from_argparse_args(
+        args,
+        checkpoint_callback=checkpoint_callback,
+        callbacks=[early_stopping_callback],
+        **kwargs
+    )
     torch.autograd.set_detect_anomaly(True)
-    trainer.fit(task_model, data)
-    trainer.teset(task_model, data)
+    trainer.fit(task_model, task_data)
+
+    # trainer.test(task_model, task_data)
 
 
 if __name__ == "__main__":

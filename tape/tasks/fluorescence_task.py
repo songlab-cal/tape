@@ -1,17 +1,17 @@
 from typing import Union, Dict, List, Callable, Optional
+import math
 from pathlib import Path
 from argparse import ArgumentParser
 
 import scipy.stats
 import torch
 import torch.nn as nn
-import torch.nn.utils.rnn as rnn
 from torch.utils.data import Dataset
 import pytorch_lightning as pl
 
 from tape.datasets import LMDBDataset
 from tape.tokenizers import TAPETokenizer
-from ..utils import pad_sequences, PathLike, TensorDict
+from ..utils import pad_sequences, PathLike, TensorDict, seqlen_mask
 from .tape_task import TAPEDataModule, TAPEPredictorBase, DEFAULT_DATA_DIR
 
 
@@ -110,8 +110,8 @@ class FluorescencePredictor(TAPEPredictorBase):
         lr_scheduler: str = "constant",
         warmup_steps: int = 0,
         max_steps: int = 10000,
-        conv_dropout: float = 0.1,
-        lstm_dropout: float = 0.1,
+        dropout: float = 0.1,
+        hidden_size: int = 512,
     ):
         super().__init__(
             base_model=base_model,
@@ -126,91 +126,73 @@ class FluorescencePredictor(TAPEPredictorBase):
             max_steps=max_steps,
         )
         self.save_hyperparameters(
-            "conv_dropout",
-            "lstm_dropout",
+            "dropout",
+            "hidden_size",
         )
 
-        output_names = ["Q8", "Q3", "RSA", "Phi", "Psi", "Disorder", "Interface"]
-        output_sizes = [8, 3, 1, 2, 2, 1, 1]
+        self.compute_attention_weights = nn.Linear(embedding_dim, 1)
+        self.dropout = nn.Dropout(dropout)
+        self.mlp = nn.Sequential(
+            nn.Linear(embedding_dim, hidden_size),
+            nn.Tanh(),
+            nn.Linear(hidden_size, 1),
+        )
 
-        self.conv1 = nn.Sequential(
-            nn.Dropout(conv_dropout),
-            nn.Conv1d(embedding_dim, 32, kernel_size=129, padding=64),
-            nn.ReLU(inplace=True),
-        )
-        self.conv2 = nn.Sequential(
-            nn.Dropout(conv_dropout),
-            nn.Conv1d(embedding_dim, 32, kernel_size=257, padding=128),
-            nn.ReLU(inplace=True),
-        )
-        self.lstm = nn.LSTM(
-            embedding_dim + 64,
-            1024,
-            num_layers=2,
-            bidirectional=True,
-            dropout=lstm_dropout,
-        )
-        self.outproj = nn.Linear(2048, sum(output_sizes))
-        self.output_names = output_names
-        self.output_sizes = output_sizes
-
-        self.mean_squared_error = pl.metrics.MeanSquaredError()
-        self.mean_absolute_error = pl.metrics.MeanAbsoluteError()
+        self.mean_train_squared_error = pl.metrics.MeanSquaredError()
+        self.mean_train_absolute_error = pl.metrics.MeanAbsoluteError()
+        self.mean_valid_squared_error = pl.metrics.MeanSquaredError()
+        self.mean_valid_absolute_error = pl.metrics.MeanAbsoluteError()
+        self.mean_test_squared_error = pl.metrics.MeanSquaredError()
+        self.mean_test_absolute_error = pl.metrics.MeanAbsoluteError()
 
     @staticmethod
     def add_args(parser: ArgumentParser) -> ArgumentParser:
         parser = TAPEPredictorBase.add_args(parser)
         parser.add_argument(
-            "--conv_dropout",
+            "--dropout",
             type=float,
             default=0.1,
-            help="Dropout on conv layers",
+            help="Dropout on attention block.",
         )
         parser.add_argument(
-            "--lstm_dropout",
-            type=float,
-            default=0.1,
-            help="Dropout on conv layers",
+            "--hidden_size",
+            type=int,
+            default=512,
+            help="MLP hidden dimension.",
         )
         return parser
 
     def forward(self, src_tokens, src_lengths):
         # B x L x D
         features = self.extract_features(src_tokens, src_lengths)
-        num_removed_tokens = src_tokens.size(1) - features.size(1)
-        # B x L x D -> B x D x L
-        features = features.transpose(1, 2)
-        conv1_out = self.conv1(features)
-        conv2_out = self.conv2(features)
-        features = torch.cat([features, conv1_out, conv2_out], 1)
-        # B x D x L -> L x B x D
-        features = features.permute(2, 0, 1)
-        lstm_input = rnn.pack_padded_sequence(
-            features, src_lengths - num_removed_tokens
-        )
-        lstm_output, _ = self.lstm(lstm_input)
-        # L x B x D -> B x L x D
-        lstm_output, _ = rnn.pad_packed_sequence(lstm_output)
-        lstm_output = lstm_output.transpose(0, 1)
-
-        output = self.outproj(lstm_output)
-        output = output.split(self.output_sizes, dim=-1)
-        return dict(zip(self.output_names, output))
+        attention_weights = self.compute_attention_weights(features)
+        attention_weights /= math.sqrt(features.size(2))
+        mask = seqlen_mask(features, src_lengths - 2)
+        attention_weights = attention_weights.masked_fill(~mask.unsqueeze(2), -10000)
+        attention_weights = attention_weights.softmax(1)
+        attention_weights = self.dropout(attention_weights)
+        pooled_features = features.transpose(1, 2) @ attention_weights
+        pooled_features = pooled_features.squeeze(2)
+        return self.mlp(pooled_features)
 
     def compute_loss(self, batch, mode: str):
         log_fluorescence = self(**batch["net_input"])
-        loss = (nn.MSELoss()(log_fluorescence, batch["log_fluorescence"]),)
+        loss = nn.MSELoss()(log_fluorescence, batch["log_fluorescence"])
         self.log(f"loss/{mode}", loss)
 
         return {"loss": loss, "log_fluorescence": log_fluorescence, "target": batch}
 
     def compute_and_log_accuracy(self, outputs, mode: str):
-        self.mean_squared_error(
+        mse = getattr(self, f"mean_{mode}_squared_error")
+        mae = getattr(self, f"mean_{mode}_absolute_error")
+        mse(
             outputs["log_fluorescence"], outputs["target"]["log_fluorescence"]
         )
-        self.mean_absolute_error(
+        mae(
             outputs["log_fluorescence"], outputs["target"]["log_fluorescence"]
         )
+        self.log(f"mse/{mode}", mse)
+        self.log(f"mae/{mode}", mae)
 
     def training_step(self, batch, batch_idx):
         return self.compute_loss(batch, "train")
@@ -227,11 +209,11 @@ class FluorescencePredictor(TAPEPredictorBase):
         return outputs
 
     def validation_epoch_end(self, outputs):
-        predictions = torch.stack([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.stack(
+        predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
+        targets = torch.cat(
             [step["target"]["log_fluorescence"] for step in outputs], 0
         )
-        corr, _ = scipy.stats.spearmanr(predictions, targets)
+        corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/valid", corr)
 
     def test_step(self, batch, batch_idx):
@@ -242,9 +224,9 @@ class FluorescencePredictor(TAPEPredictorBase):
         return outputs
 
     def test_epoch_end(self, outputs):
-        predictions = torch.stack([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.stack(
+        predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
+        targets = torch.cat(
             [step["target"]["log_fluorescence"] for step in outputs], 0
         )
-        corr, _ = scipy.stats.spearmanr(predictions, targets)
+        corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/test", corr)

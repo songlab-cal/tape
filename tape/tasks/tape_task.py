@@ -1,4 +1,4 @@
-from typing import Union, Dict, Callable, Optional
+from typing import Callable, Optional
 import logging
 from pathlib import Path
 import tempfile
@@ -11,14 +11,12 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
 
-from . import lr_schedulers
-from .utils import http_get
+from .. import lr_schedulers
+from ..utils import http_get, PathLike
 
 logger = logging.getLogger(__name__)
 
-PathLike = Union[str, Path]
-DEFAULT_DATA_DIR = Path(__file__).parents[1] / "data"
-TensorDict = Dict[str, torch.Tensor]
+DEFAULT_DATA_DIR = Path(__file__).parents[2] / "data"
 
 
 class TAPEDataModule(pl.LightningDataModule):
@@ -32,7 +30,7 @@ class TAPEDataModule(pl.LightningDataModule):
         tokenizer: str = "iupac",
     ):
         super().__init__()
-        self._data_url = data_dir
+        self._data_url = data_url
         self._task_name = task_name
         self._data_dir = Path(data_dir)
         self._tokenizer = tokenizer

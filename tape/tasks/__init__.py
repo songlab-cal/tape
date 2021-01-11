@@ -1,19 +1,24 @@
 from typing import Tuple
-from argparse import Namespace
+from argparse import ArgumentParser
 import torch.nn as nn
 from .tape_task import TAPEDataModule, TAPEPredictorBase
 
 
 def get(
-    args: Namespace, base_model: nn.Module, extract_features, embedding_dim: int
+    parser: ArgumentParser, base_model: nn.Module, extract_features, embedding_dim: int
 ) -> Tuple[TAPEDataModule, TAPEPredictorBase]:
-    if args.task == "secondary_structure":
+    known_args, _ = parser.parse_known_args()
+    task_name = parser.parse_known_args()[0].task
+    if task_name == "secondary_structure":
         from .secondary_structure_task import (
-            SecondaryStructureDatamodule,
+            SecondaryStructureDataModule,
             SecondaryStructurePredictor,
         )
+        SecondaryStructureDataModule.add_args(parser)
+        SecondaryStructurePredictor.add_args(parser)
+        args = parser.parse_args()
 
-        task_data = SecondaryStructureDatamodule(
+        task_data = SecondaryStructureDataModule(
             args.data_dir, args.batch_size, args.num_workers
         )
         task_model = SecondaryStructurePredictor(
@@ -31,12 +36,15 @@ def get(
             lstm_dropout=args.lstm_dropout,
         )
         return task_data, task_model
-    elif args.task == "fluorescence":
+    elif task_name == "fluorescence":
         from .fluorescence_task import (
             FluorescenceDataModule,
             FluorescencePredictor,
         )
 
+        FluorescenceDataModule.add_args(parser)
+        FluorescencePredictor.add_args(parser)
+        args = parser.parse_args()
         task_data = FluorescenceDataModule(
             args.data_dir, args.batch_size, args.num_workers
         )

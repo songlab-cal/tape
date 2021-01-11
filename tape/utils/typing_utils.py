@@ -1,4 +1,5 @@
-from typing import Union, Path, Dict
+from typing import Union, Dict
+from pathlib import Path
 import torch
 
 
