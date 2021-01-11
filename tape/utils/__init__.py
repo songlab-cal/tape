@@ -17,3 +17,6 @@ from .utils import seqlen_mask  # noqa: F401
 
 from .typing_utils import PathLike  # noqa: F401
 from .typing_utils import TensorDict  # noqa: F401
+
+from .msa import parse_fasta  # noqa: F401
+from .msa import hhfilter_sequences  # noqa F401

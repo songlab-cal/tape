@@ -11,7 +11,14 @@ import pytorch_lightning as pl
 
 from tape.datasets import LMDBDataset
 from tape.tokenizers import TAPETokenizer
-from ..utils import pad_sequences, PathLike, TensorDict, seqlen_mask
+from ..utils import (
+    pad_sequences,
+    PathLike,
+    TensorDict,
+    seqlen_mask,
+    parse_fasta,
+    hhfilter_sequences,
+)
 from .tape_task import TAPEDataModule, TAPEPredictorBase, DEFAULT_DATA_DIR
 
 
@@ -21,6 +28,8 @@ class FluorescenceDataset(Dataset):
         data_path: Union[str, Path],
         split: str,
         tokenizer: Union[str, TAPETokenizer] = "iupac",
+        use_msa: bool = False,
+        max_tokens_per_msa: int = 2 ** 14,
     ):
 
         if split not in ("train", "valid", "test"):
@@ -35,6 +44,26 @@ class FluorescenceDataset(Dataset):
         data_path = Path(data_path)
         data_file = f"fluorescence/fluorescence_{split}.lmdb"
         self.data = LMDBDataset(data_path / data_file)
+        self.use_msa = use_msa
+
+        if use_msa:
+            msa_file = "fluorescence/wtGFP.a3m"
+            msa_path = data_path / msa_file
+            _, msa = parse_fasta(msa_path, remove_insertions=True)
+
+            seqlen = len(self.tokenizer.encode(self.data[0]["primary"]))
+            max_num_sequences = max_tokens_per_msa // seqlen
+            sequences_from_msa = max_num_sequences - 1
+
+            sequences = hhfilter_sequences(msa, diff=sequences_from_msa)
+            tokens = torch.stack(
+                [
+                    self.tokenizer.encode(seq)
+                    for _, seq in sequences[:sequences_from_msa]
+                ],
+                0,
+            ).long()
+            self.msa = tokens
 
     def __len__(self) -> int:
         return len(self.data)
@@ -42,6 +71,9 @@ class FluorescenceDataset(Dataset):
     def __getitem__(self, index: int):
         item = self.data[index]
         src_tokens = torch.from_numpy(self.tokenizer.encode(item["primary"])).long()
+        if self.use_msa:
+            src_tokens = src_tokens.unsqueeze(0)
+            src_tokens = torch.cat([src_tokens, self.msa], 0)
         value = torch.tensor(item["log_fluorescence"][0], dtype=torch.float)
         return {"src_tokens": src_tokens, "log_fluorescence": value}
 
@@ -62,7 +94,7 @@ class FluorescenceDataset(Dataset):
                 [item["log_fluorescence"] for item in batch], 0
             ).unsqueeze(1),
         }
-        return result
+        return result  # type: ignore
 
 
 class FluorescenceDataModule(TAPEDataModule):
@@ -185,12 +217,8 @@ class FluorescencePredictor(TAPEPredictorBase):
     def compute_and_log_accuracy(self, outputs, mode: str):
         mse = getattr(self, f"mean_{mode}_squared_error")
         mae = getattr(self, f"mean_{mode}_absolute_error")
-        mse(
-            outputs["log_fluorescence"], outputs["target"]["log_fluorescence"]
-        )
-        mae(
-            outputs["log_fluorescence"], outputs["target"]["log_fluorescence"]
-        )
+        mse(outputs["log_fluorescence"], outputs["target"]["log_fluorescence"])
+        mae(outputs["log_fluorescence"], outputs["target"]["log_fluorescence"])
         self.log(f"mse/{mode}", mse)
         self.log(f"mae/{mode}", mae)
 
@@ -210,9 +238,7 @@ class FluorescencePredictor(TAPEPredictorBase):
 
     def validation_epoch_end(self, outputs):
         predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.cat(
-            [step["target"]["log_fluorescence"] for step in outputs], 0
-        )
+        targets = torch.cat([step["target"]["log_fluorescence"] for step in outputs], 0)
         corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/valid", corr)
 
@@ -225,8 +251,6 @@ class FluorescencePredictor(TAPEPredictorBase):
 
     def test_epoch_end(self, outputs):
         predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.cat(
-            [step["target"]["log_fluorescence"] for step in outputs], 0
-        )
+        targets = torch.cat([step["target"]["log_fluorescence"] for step in outputs], 0)
         corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/test", corr)
