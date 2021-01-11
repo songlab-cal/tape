@@ -1,7 +1,9 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
+import torch
 import sys
 import logging
 from tape import utils
+from tape import tasks
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
@@ -18,12 +20,29 @@ def extract_features(model, src_tokens, src_lengths):
     return model(src_tokens, utils.seqlen_mask(src_tokens, src_lengths))[0][:, 1:-1]
 
 
+def get_num_gpus(args: Namespace) -> int:
+    try:
+        return int(args.gpus)
+    except ValueError:
+        return len(args.gpus.split(","))
+
+
+def maybe_unset_distributed(args: Namespace) -> None:
+    if get_num_gpus(args) <= 1:
+        args.distributed_backend = None
+
+
 def train():
     import pytorch_lightning as pl
     from tape.models.modeling_bert import ProteinBertModel
     from tape.tasks import SecondaryStructureDatamodule, SecondaryStructurePrediction
     # Initialize parser
     parser = ArgumentParser()
+    parser.add_argument(
+        "task",
+        choices=["secondary_structure", "fluorescence"],
+        help="Which downstream task to train."
+    )
     parser.add_argument(
         "--wandb_project",
         type=str,
@@ -39,25 +58,12 @@ def train():
         max_steps=1000,
     )
     args = parser.parse_args()
+    maybe_unset_distributed(args)
 
     data = SecondaryStructureDatamodule(
         args.data_dir, args.batch_size, args.num_workers
     )
     base_model = ProteinBertModel.from_pretrained("bert-base")
-    task_model = SecondaryStructurePrediction(
-        base_model,
-        extract_features,
-        768,
-        args.conv_dropout,
-        args.lstm_dropout,
-        args.freeze_base,
-        args.optimizer,
-        args.learning_rate,
-        args.weight_decay,
-        args.lr_scheduler,
-        args.warmup_steps,
-        args.max_steps,
-    )
 
     kwargs = {}
     if args.wandb_project:
@@ -73,6 +79,7 @@ def train():
 
     # Initialize Trainer
     trainer = pl.Trainer.from_argparse_args(args, **kwargs)
+    torch.autograd.set_detect_anomaly(True)
     trainer.fit(task_model, data)
     trainer.teset(task_model, data)
 
