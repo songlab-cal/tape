@@ -166,7 +166,7 @@ class FluorescencePredictor(TAPEPredictorBase):
         self.dropout = nn.Dropout(dropout)
         self.mlp = nn.Sequential(
             nn.Linear(embedding_dim, hidden_size),
-            nn.Tanh(),
+            nn.ReLU(),
             nn.Linear(hidden_size, 1),
         )
 

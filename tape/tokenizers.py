@@ -2,6 +2,7 @@ from typing import List
 import logging
 from collections import OrderedDict
 import numpy as np
+from .utils import PathLike
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +129,7 @@ class TAPETokenizer():
             raise RuntimeError(f"{self._vocab_type} vocab does not support masking")
 
     def tokenize(self, text: str) -> List[str]:
-        return [x for x in text]
+        return list(text)
 
     def convert_token_to_id(self, token: str) -> int:
         """ Converts a token (str/unicode) in an id using the vocab. """
@@ -172,3 +173,33 @@ class TAPETokenizer():
     @classmethod
     def from_pretrained(cls, **kwargs):
         return cls()
+
+
+class FairseqTokenizer(TAPETokenizer):
+    def __init__(self, path: PathLike):
+        from fairseq.data import Dictionary
+        self.vocab = Dictionary.load(path)
+        self.vocab.add_symbol("<mask>")
+        self.tokens = self.dictionary.symbols
+
+    @property
+    def start_token(self) -> str:
+        return "<s>"
+
+    @property
+    def stop_token(self) -> str:
+        return "</s>"
+
+    def convert_token_to_id(self, token: str) -> int:
+        """ Converts a token (str/unicode) in an id using the vocab. """
+        try:
+            return self.vocab.index(token)
+        except KeyError:
+            raise KeyError(f"Unrecognized token: '{token}'")
+
+    def convert_id_to_token(self, index: int) -> str:
+        """Converts an index (integer) in a token (string/unicode) using the vocab."""
+        try:
+            return self.vocab[index]
+        except IndexError:
+            raise IndexError(f"Unrecognized index: '{index}'")
