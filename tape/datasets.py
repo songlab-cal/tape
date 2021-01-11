@@ -14,7 +14,6 @@ from torch.utils.data import Dataset
 from scipy.spatial.distance import pdist, squareform
 
 from .tokenizers import TAPETokenizer
-from .registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -267,7 +266,6 @@ class NPZDataset(Dataset):
         return item
 
 
-@registry.register_task('embed')
 class EmbedDataset(Dataset):
 
     def __init__(self,
@@ -299,7 +297,6 @@ class EmbedDataset(Dataset):
         return {'ids': ids, 'input_ids': tokens, 'input_mask': input_mask}  # type: ignore
 
 
-@registry.register_task('masked_language_modeling')
 class MaskedLanguageModelingDataset(Dataset):
     """Creates the Masked Language Modeling Pfam Dataset
     Args:
@@ -388,7 +385,6 @@ class MaskedLanguageModelingDataset(Dataset):
         return masked_tokens, labels
 
 
-@registry.register_task('language_modeling')
 class LanguageModelingDataset(Dataset):
     """Creates the Language Modeling Pfam Dataset
     Args:
@@ -441,7 +437,6 @@ class LanguageModelingDataset(Dataset):
                 'targets': torch_labels}
 
 
-@registry.register_task('fluorescence')
 class FluorescenceDataset(Dataset):
 
     def __init__(self,
@@ -482,7 +477,6 @@ class FluorescenceDataset(Dataset):
                 'targets': fluorescence_true_value}
 
 
-@registry.register_task('stability')
 class StabilityDataset(Dataset):
 
     def __init__(self,
@@ -524,7 +518,6 @@ class StabilityDataset(Dataset):
                 'targets': stability_true_value}
 
 
-@registry.register_task('remote_homology', num_labels=1195)
 class RemoteHomologyDataset(Dataset):
 
     def __init__(self,
@@ -566,7 +559,6 @@ class RemoteHomologyDataset(Dataset):
                 'targets': fold_label}
 
 
-@registry.register_task('contact_prediction')
 class ProteinnetDataset(Dataset):
 
     def __init__(self,
@@ -619,7 +611,6 @@ class ProteinnetDataset(Dataset):
                 'protein_length': protein_length}
 
 
-@registry.register_task('secondary_structure', num_labels=3)
 class SecondaryStructureDataset(Dataset):
 
     def __init__(self,
@@ -667,7 +658,6 @@ class SecondaryStructureDataset(Dataset):
         return output
 
 
-@registry.register_task('trrosetta')
 class TRRosettaDataset(Dataset):
 
     def __init__(self,

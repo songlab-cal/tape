@@ -10,7 +10,6 @@ from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
 from .modeling_utils import PairwiseContactPredictionHead
-from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +118,6 @@ class UniRepAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
-@registry.register_task_model('embed', 'unirep')
 class UniRepModel(UniRepAbstractModel):
 
     def __init__(self, config: UniRepConfig):
@@ -146,7 +144,6 @@ class UniRepModel(UniRepAbstractModel):
         return outputs
 
 
-@registry.register_task_model('language_modeling', 'unirep')
 class UniRepForLM(UniRepAbstractModel):
     # TODO: Fix this for UniRep - UniRep changes the size of the targets
 
@@ -183,8 +180,6 @@ class UniRepForLM(UniRepAbstractModel):
         return outputs
 
 
-@registry.register_task_model('fluorescence', 'unirep')
-@registry.register_task_model('stability', 'unirep')
 class UniRepForValuePrediction(UniRepAbstractModel):
 
     def __init__(self, config):
@@ -205,7 +200,6 @@ class UniRepForValuePrediction(UniRepAbstractModel):
         return outputs
 
 
-@registry.register_task_model('remote_homology', 'unirep')
 class UniRepForSequenceClassification(UniRepAbstractModel):
 
     def __init__(self, config):
@@ -227,7 +221,6 @@ class UniRepForSequenceClassification(UniRepAbstractModel):
         return outputs
 
 
-@registry.register_task_model('secondary_structure', 'unirep')
 class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
 
     def __init__(self, config):
@@ -249,7 +242,6 @@ class UniRepForSequenceToSequenceClassification(UniRepAbstractModel):
         return outputs
 
 
-@registry.register_task_model('contact_prediction', 'unirep')
 class UniRepForContactPrediction(UniRepAbstractModel):
 
     def __init__(self, config):

@@ -35,7 +35,6 @@ from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
 from .modeling_utils import PairwiseContactPredictionHead
-from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -395,7 +394,6 @@ class ProteinBertAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
-@registry.register_task_model('embed', 'transformer')
 class ProteinBertModel(ProteinBertAbstractModel):
 
     def __init__(self, config):
@@ -455,7 +453,6 @@ class ProteinBertModel(ProteinBertAbstractModel):
         return outputs  # sequence_output, pooled_output, (hidden_states), (attentions)
 
 
-@registry.register_task_model('masked_language_modeling', 'transformer')
 class ProteinBertForMaskedLM(ProteinBertAbstractModel):
 
     def __init__(self, config):
@@ -490,8 +487,6 @@ class ProteinBertForMaskedLM(ProteinBertAbstractModel):
         return outputs
 
 
-@registry.register_task_model('fluorescence', 'transformer')
-@registry.register_task_model('stability', 'transformer')
 class ProteinBertForValuePrediction(ProteinBertAbstractModel):
 
     def __init__(self, config):
@@ -512,7 +507,6 @@ class ProteinBertForValuePrediction(ProteinBertAbstractModel):
         return outputs
 
 
-@registry.register_task_model('remote_homology', 'transformer')
 class ProteinBertForSequenceClassification(ProteinBertAbstractModel):
 
     def __init__(self, config):
@@ -535,7 +529,6 @@ class ProteinBertForSequenceClassification(ProteinBertAbstractModel):
         return outputs
 
 
-@registry.register_task_model('secondary_structure', 'transformer')
 class ProteinBertForSequenceToSequenceClassification(ProteinBertAbstractModel):
 
     def __init__(self, config):
@@ -557,7 +550,6 @@ class ProteinBertForSequenceToSequenceClassification(ProteinBertAbstractModel):
         return outputs
 
 
-@registry.register_task_model('contact_prediction', 'transformer')
 class ProteinBertForContactPrediction(ProteinBertAbstractModel):
 
     def __init__(self, config):

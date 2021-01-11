@@ -10,7 +10,6 @@ from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
 from .modeling_utils import PairwiseContactPredictionHead
-from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +68,6 @@ class ProteinOneHotModel(ProteinOneHotAbstractModel):
         return outputs
 
 
-@registry.register_task_model('fluorescence', 'onehot')
-@registry.register_task_model('stability', 'onehot')
 class ProteinOneHotForValuePrediction(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
@@ -91,7 +88,6 @@ class ProteinOneHotForValuePrediction(ProteinOneHotAbstractModel):
         return outputs
 
 
-@registry.register_task_model('remote_homology', 'onehot')
 class ProteinOneHotForSequenceClassification(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
@@ -112,7 +108,6 @@ class ProteinOneHotForSequenceClassification(ProteinOneHotAbstractModel):
         return outputs
 
 
-@registry.register_task_model('secondary_structure', 'onehot')
 class ProteinOneHotForSequenceToSequenceClassification(ProteinOneHotAbstractModel):
 
     def __init__(self, config):
@@ -134,7 +129,6 @@ class ProteinOneHotForSequenceToSequenceClassification(ProteinOneHotAbstractMode
         return outputs
 
 
-@registry.register_task_model('contact_prediction', 'onehot')
 class ProteinOneHotForContactPrediction(ProteinOneHotAbstractModel):
 
     def __init__(self, config):

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from ..registry import registry
 from .modeling_utils import ProteinConfig
 from .modeling_utils import ProteinModel
 
@@ -318,7 +317,6 @@ class TRRosettaPredictor(TRRosettaAbstractModel):
         return outputs
 
 
-@registry.register_task_model('trrosetta', 'trrosetta')
 class TRRosetta(TRRosettaAbstractModel):
 
     def __init__(self, config: TRRosettaConfig):

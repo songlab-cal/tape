@@ -10,7 +10,6 @@ from .modeling_utils import ValuePredictionHead
 from .modeling_utils import SequenceClassificationHead
 from .modeling_utils import SequenceToSequenceClassificationHead
 from .modeling_utils import PairwiseContactPredictionHead
-from ..registry import registry
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +140,6 @@ class ProteinLSTMAbstractModel(ProteinModel):
             module.bias.data.zero_()
 
 
-@registry.register_task_model('embed', 'lstm')
 class ProteinLSTMModel(ProteinLSTMAbstractModel):
 
     def __init__(self, config: ProteinLSTMConfig):
@@ -166,7 +164,6 @@ class ProteinLSTMModel(ProteinLSTMAbstractModel):
         return outputs  # sequence_output, pooled_output, (hidden_states)
 
 
-@registry.register_task_model('language_modeling', 'lstm')
 class ProteinLSTMForLM(ProteinLSTMAbstractModel):
 
     def __init__(self, config):
@@ -206,8 +203,6 @@ class ProteinLSTMForLM(ProteinLSTMAbstractModel):
         return outputs
 
 
-@registry.register_task_model('fluorescence', 'lstm')
-@registry.register_task_model('stability', 'lstm')
 class ProteinLSTMForValuePrediction(ProteinLSTMAbstractModel):
 
     def __init__(self, config):
@@ -228,7 +223,6 @@ class ProteinLSTMForValuePrediction(ProteinLSTMAbstractModel):
         return outputs
 
 
-@registry.register_task_model('remote_homology', 'lstm')
 class ProteinLSTMForSequenceClassification(ProteinLSTMAbstractModel):
 
     def __init__(self, config):
@@ -250,7 +244,6 @@ class ProteinLSTMForSequenceClassification(ProteinLSTMAbstractModel):
         return outputs
 
 
-@registry.register_task_model('secondary_structure', 'lstm')
 class ProteinLSTMForSequenceToSequenceClassification(ProteinLSTMAbstractModel):
 
     def __init__(self, config):
@@ -283,7 +276,6 @@ class ProteinLSTMForSequenceToSequenceClassification(ProteinLSTMAbstractModel):
         return outputs
 
 
-@registry.register_task_model('contact_prediction', 'lstm')
 class ProteinLSTMForContactPrediction(ProteinLSTMAbstractModel):
 
     def __init__(self, config):
