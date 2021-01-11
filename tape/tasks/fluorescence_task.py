@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Callable, Optional
+from typing import Union, Dict, List, Callable, Optional, Type
 import math
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
@@ -7,6 +7,7 @@ import scipy.stats
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+from Bio.Align import PairwiseAligner, substitution_matrices
 
 from ..tokenizers import TAPETokenizer
 from ..utils import (
@@ -45,7 +46,7 @@ class FluorescenceDataset(TAPEDataset):
             msa_file = "fluorescence/wtGFP.a3m"
             msa_path = self.data_path / msa_file
             _, msa = parse_fasta(msa_path, remove_insertions=True)
-
+            reference = msa[0]
             seqlen = len(self.tokenizer.encode(self.data[0]["primary"]))
             max_num_sequences = max_tokens_per_msa // seqlen
             sequences_from_msa = max_num_sequences - 1
@@ -58,7 +59,19 @@ class FluorescenceDataset(TAPEDataset):
                 ],
                 0,
             ).long()
+            self.reference = reference
             self.msa = tokens
+            self.aligner = PairwiseAligner(
+                substitution_matrix=substitution_matrices.load("BLOSUM62"),
+                mode="global",
+                target_open_gap_score=-float("inf"),
+            )
+
+    def maybe_align_sequence(self, sequence: str) -> str:
+        if not self.use_msa or len(sequence) == len(self.reference):
+            return sequence
+        else:
+            return str(self.aligner.align(self.reference, sequence)[0]).split("\n")[2]
 
     @property
     def task_name(self) -> str:
@@ -70,7 +83,8 @@ class FluorescenceDataset(TAPEDataset):
 
     def __getitem__(self, index: int):
         item = self.data[index]
-        src_tokens = torch.from_numpy(self.tokenizer.encode(item["primary"])).long()
+        sequence = self.maybe_align_sequence(item["primary"])
+        src_tokens = torch.from_numpy(self.tokenizer.encode(sequence)).long()
         if self.use_msa:
             src_tokens = src_tokens.unsqueeze(0)
             src_tokens = torch.cat([src_tokens, self.msa], 0)
@@ -98,7 +112,6 @@ class FluorescenceDataset(TAPEDataset):
 
 
 class FluorescenceDataModule(TAPEDataModule):
-
     @property
     def data_url(self) -> str:
         return "http://s3.amazonaws.com/proteindata/data_pytorch/fluorescence.tar.gz"  # noqa: E501
@@ -107,17 +120,9 @@ class FluorescenceDataModule(TAPEDataModule):
     def task_name(self) -> str:
         return "fluorescence"
 
-    def train_dataloader(self):
-        dataset = FluorescenceDataset(self.data_dir, "train", self.tokenizer)
-        return self.make_dataloader(dataset, shuffle=True)
-
-    def val_dataloader(self):
-        dataset = FluorescenceDataset(self.data_dir, "valid", self.tokenizer)
-        return self.make_dataloader(dataset, shuffle=False)
-
-    def test_dataloader(self):
-        dataset = FluorescenceDataset(self.data_dir, "test", self.tokenizer)
-        return self.make_dataloader(dataset, shuffle=False)
+    @property
+    def dataset_type(self) -> Type[FluorescenceDataset]:
+        return FluorescenceDataset
 
 
 class FluorescencePredictor(TAPEPredictorBase):

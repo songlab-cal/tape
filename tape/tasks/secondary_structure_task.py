@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Callable, Optional
+from typing import Union, Dict, List, Callable, Optional, Type
 from argparse import ArgumentParser, Namespace
 
 import numpy as np
@@ -120,20 +120,13 @@ class SecondaryStructureDataModule(TAPEDataModule):
     def task_name(self) -> str:
         return "secondary_structure"
 
-    def train_dataloader(self):
-        dataset = SecondaryStructureDataset(self.data_dir, "train", self.tokenizer)
-        return self.make_dataloader(dataset, shuffle=True)
-
-    def val_dataloader(self):
-        dataset = SecondaryStructureDataset(self.data_dir, "valid", self.tokenizer)
-        return self.make_dataloader(dataset, shuffle=False)
+    @property
+    def dataset_type(self) -> Type[SecondaryStructureDataset]:
+        return SecondaryStructureDataset
 
     def test_dataloader(self):
         return [
-            self.make_dataloader(
-                SecondaryStructureDataset(self.data_dir, test_set, self.tokenizer),
-                shuffle=False,
-            )
+            self.make_dataloader(test_set, shuffle=False)
             for test_set in ["cb513", "ts115", "casp12"]
         ]
 

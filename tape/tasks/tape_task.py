@@ -128,8 +128,11 @@ class TAPEDataModule(pl.LightningDataModule):
                     f.extractall(self.data_dir)
 
     def make_dataloader(
-        self, dataset: TAPEDataset, shuffle: bool = False
+        self, split: str, shuffle: bool = False
     ) -> DataLoader:
+        dataset = self.dataset_type(
+            self.data_dir, split, self.tokenizer, self.use_msa, self.max_tokens_per_msa
+        )
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -148,6 +151,10 @@ class TAPEDataModule(pl.LightningDataModule):
 
     @abstractproperty
     def task_name(self) -> str:
+        raise NotImplementedError
+
+    @abstractproperty
+    def dataset_type(self) -> Type[TAPEDataset]:
         raise NotImplementedError
 
     @property
@@ -169,6 +176,15 @@ class TAPEDataModule(pl.LightningDataModule):
     @property
     def max_tokens_per_msa(self) -> int:
         return self._max_tokens_per_msa
+
+    def train_dataloader(self):
+        return self.make_dataloader("train", shuffle=True)
+
+    def val_dataloader(self):
+        return self.make_dataloader("valid", shuffle=True)
+
+    def test_dataloader(self):
+        return self.make_dataloader("test", shuffle=True)
 
 
 class TAPEPredictorBase(pl.LightningModule):
