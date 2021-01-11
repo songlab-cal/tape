@@ -56,11 +56,17 @@ def train():
         max_steps=50000,
         distributed_backend="ddp",
     )
-    args, _ = parser.parse_known_args()
-    maybe_unset_distributed(args)
 
+    task = tasks.get(parser)
+    task.add_args(parser)
+
+    args = parser.parse_args()
+    maybe_unset_distributed(args)
+    task_data = task.build_data(args)
     base_model = ProteinBertModel.from_pretrained("bert-base")
-    task_data, task_model = tasks.get(parser, base_model, extract_features, 768)
+    task_model = task.build_model(
+        args, base_model, extract_features, 768,
+    )
 
     kwargs = {}
     if args.wandb_project:
@@ -89,8 +95,6 @@ def train():
     )
     torch.autograd.set_detect_anomaly(True)
     trainer.fit(task_model, task_data)
-
-    # trainer.test(task_model, task_data)
 
 
 if __name__ == "__main__":

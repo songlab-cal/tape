@@ -1,28 +1,30 @@
 from typing import Union, Dict, List, Callable, Optional
 import math
 from pathlib import Path
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 
 import scipy.stats
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
 import pytorch_lightning as pl
 
-from tape.datasets import LMDBDataset
-from tape.tokenizers import TAPETokenizer
+from ..tokenizers import TAPETokenizer
 from ..utils import (
     pad_sequences,
-    PathLike,
     TensorDict,
     seqlen_mask,
     parse_fasta,
     hhfilter_sequences,
 )
-from .tape_task import TAPEDataModule, TAPEPredictorBase, DEFAULT_DATA_DIR
+from .tape_task import (
+    TAPEDataset,
+    TAPEDataModule,
+    TAPEPredictorBase,
+    TAPETask,
+)
 
 
-class FluorescenceDataset(Dataset):
+class FluorescenceDataset(TAPEDataset):
     def __init__(
         self,
         data_path: Union[str, Path],
@@ -31,24 +33,17 @@ class FluorescenceDataset(Dataset):
         use_msa: bool = False,
         max_tokens_per_msa: int = 2 ** 14,
     ):
+        super().__init__(
+            data_path=data_path,
+            split=split,
+            tokenizer=tokenizer,
+            use_msa=use_msa,
+            max_tokens_per_msa=max_tokens_per_msa,
+        )
 
-        if split not in ("train", "valid", "test"):
-            raise ValueError(
-                f"Unrecognized split: {split}. "
-                f"Must be one of ['train', 'valid', 'test']"
-            )
-        if isinstance(tokenizer, str):
-            tokenizer = TAPETokenizer(vocab=tokenizer)
-        self.tokenizer = tokenizer
-
-        data_path = Path(data_path)
-        data_file = f"fluorescence/fluorescence_{split}.lmdb"
-        self.data = LMDBDataset(data_path / data_file)
-        self.use_msa = use_msa
-
-        if use_msa:
+        if self.use_msa:
             msa_file = "fluorescence/wtGFP.a3m"
-            msa_path = data_path / msa_file
+            msa_path = self.data_path / msa_file
             _, msa = parse_fasta(msa_path, remove_insertions=True)
 
             seqlen = len(self.tokenizer.encode(self.data[0]["primary"]))
@@ -58,15 +53,20 @@ class FluorescenceDataset(Dataset):
             sequences = hhfilter_sequences(msa, diff=sequences_from_msa)
             tokens = torch.stack(
                 [
-                    self.tokenizer.encode(seq)
+                    torch.from_numpy(self.tokenizer.encode(seq))
                     for _, seq in sequences[:sequences_from_msa]
                 ],
                 0,
             ).long()
             self.msa = tokens
 
-    def __len__(self) -> int:
-        return len(self.data)
+    @property
+    def task_name(self) -> str:
+        return "fluorescence"
+
+    @property
+    def splits(self) -> List[str]:
+        return ["train", "valid", "test"]
 
     def __getitem__(self, index: int):
         item = self.data[index]
@@ -98,21 +98,14 @@ class FluorescenceDataset(Dataset):
 
 
 class FluorescenceDataModule(TAPEDataModule):
-    def __init__(
-        self,
-        data_dir: PathLike = DEFAULT_DATA_DIR,
-        batch_size: int = 64,
-        num_workers: int = 3,
-        tokenizer: str = "iupac",
-    ):
-        super().__init__(
-            data_url="http://s3.amazonaws.com/proteindata/data_pytorch/fluorescence.tar.gz",  # noqa: E501
-            task_name="fluorescence",
-            data_dir=data_dir,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            tokenizer=tokenizer,
-        )
+
+    @property
+    def data_url(self) -> str:
+        return "http://s3.amazonaws.com/proteindata/data_pytorch/fluorescence.tar.gz"  # noqa: E501
+
+    @property
+    def task_name(self) -> str:
+        return "fluorescence"
 
     def train_dataloader(self):
         dataset = FluorescenceDataset(self.data_dir, "train", self.tokenizer)
@@ -254,3 +247,33 @@ class FluorescencePredictor(TAPEPredictorBase):
         targets = torch.cat([step["target"]["log_fluorescence"] for step in outputs], 0)
         corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/test", corr)
+
+    @classmethod
+    def from_argparse_args(
+        cls,
+        args: Namespace,
+        base_model: nn.Module,
+        extract_features: Callable[
+            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
+        ],
+        embedding_dim: int,
+    ):
+        return cls(
+            base_model=base_model,
+            extract_features=extract_features,
+            embedding_dim=embedding_dim,
+            freeze_base=args.freeze_base,
+            optimizer=args.optimizer,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
+            lr_scheduler=args.lr_scheduler,
+            warmup_steps=args.warmup_steps,
+            max_steps=args.max_steps,
+            dropout=args.dropout,
+            hidden_size=args.hidden_size,
+        )
+
+
+FluorescenceTask = TAPETask(
+    "fluorescence", FluorescenceDataModule, FluorescencePredictor  # type: ignore
+)

@@ -1,9 +1,10 @@
-from typing import Callable, Optional
+from abc import ABC, abstractproperty, abstractmethod, abstractclassmethod
+from typing import Callable, Optional, Union, Dict, List, Type
 import logging
 from pathlib import Path
 import tempfile
 import tarfile
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 from functools import partial
 
 import torch
@@ -12,42 +13,105 @@ from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
 
 from .. import lr_schedulers
-from ..utils import http_get, PathLike
+from ..tokenizers import TAPETokenizer, FairseqTokenizer
+from ..datasets import LMDBDataset
+from ..utils import http_get, PathLike, TensorDict
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_DATA_DIR = Path(__file__).parents[2] / "data"
 
 
+class TAPEDataset(Dataset, ABC):
+    def __init__(
+        self,
+        data_path: PathLike,
+        split: str,
+        tokenizer: Union[str, TAPETokenizer] = "iupac",
+        use_msa: bool = False,
+        max_tokens_per_msa: int = 2 ** 14,
+    ):
+        super().__init__()
+        if split not in self.splits:
+            raise ValueError(
+                f"Unrecognized split: {split}. " f"Must be one of {self.splits}"
+            )
+        if isinstance(tokenizer, str):
+            if Path(tokenizer).exists() and tokenizer.endswith("dict.txt"):
+                tokenizer = FairseqTokenizer(tokenizer)
+            else:
+                tokenizer = TAPETokenizer(vocab=tokenizer)
+        self.tokenizer = tokenizer
+
+        data_path = Path(data_path)
+        data_file = f"{self.task_name}/{self.task_name}_{split}.lmdb"
+        self.data = LMDBDataset(data_path / data_file)
+        self.data_path = data_path
+        self.use_msa = use_msa
+        self.max_tokens_per_msa = max_tokens_per_msa
+
+    def __len__(self) -> int:
+        return len(self.data)
+
+    @abstractmethod
+    def __getitem__(self, index: int):
+        raise NotImplementedError
+
+    @abstractmethod
+    def collate_fn(
+        self, batch: List[TensorDict]
+    ) -> Dict[str, Union[torch.Tensor, TensorDict]]:
+        raise NotImplementedError
+
+    @abstractproperty
+    def task_name(self) -> str:
+        raise NotImplementedError
+
+    @abstractproperty
+    def splits(self) -> List[str]:
+        raise NotImplementedError
+
+
 class TAPEDataModule(pl.LightningDataModule):
     def __init__(
         self,
-        data_url: str,
-        task_name: str,
         data_dir: PathLike = DEFAULT_DATA_DIR,
         batch_size: int = 64,
         num_workers: int = 3,
         tokenizer: str = "iupac",
+        use_msa: bool = False,
+        max_tokens_per_msa: int = 2 ** 14,
     ):
         super().__init__()
-        self._data_url = data_url
-        self._task_name = task_name
         self._data_dir = Path(data_dir)
         self._tokenizer = tokenizer
         self._batch_size = batch_size
         self._num_workers = num_workers
+        self._use_msa = use_msa
+        self._max_tokens_per_msa = max_tokens_per_msa
 
     @staticmethod
     def add_args(parser: ArgumentParser) -> ArgumentParser:
         parser.add_argument(
             "--data_dir", default=DEFAULT_DATA_DIR, help="Data directory"
         )
-        parser.add_argument("--tokenizer", default="tokenizer", type=str)
+        parser.add_argument("--tokenizer", default="iupac", type=str)
         parser.add_argument(
             "--batch_size", default=64, type=int, help="Batch size during training."
         )
         parser.add_argument(
             "--num_workers", default=3, type=int, help="Num dataloading workers."
+        )
+        parser.add_argument(
+            "--use_msa",
+            action="store_true",
+            help="Whether to pass MSAs to the input model.",
+        )
+        parser.add_argument(
+            "--max_tokens_per_msa",
+            type=int,
+            default=2 ** 14,
+            help="Max tokens to use in the MSA if loading MSAs.",
         )
         return parser
 
@@ -63,7 +127,9 @@ class TAPEDataModule(pl.LightningDataModule):
                 with tarfile.open(temp_file.name, "r|gz") as f:
                     f.extractall(self.data_dir)
 
-    def make_dataloader(self, dataset: Dataset, shuffle: bool = False) -> DataLoader:
+    def make_dataloader(
+        self, dataset: TAPEDataset, shuffle: bool = False
+    ) -> DataLoader:
         return DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -76,13 +142,13 @@ class TAPEDataModule(pl.LightningDataModule):
     def data_dir(self) -> Path:
         return self._data_dir
 
-    @property
+    @abstractproperty
     def data_url(self) -> str:
-        return self._data_url
+        raise NotImplementedError
 
-    @property
+    @abstractproperty
     def task_name(self) -> str:
-        return self._task_name
+        raise NotImplementedError
 
     @property
     def tokenizer(self) -> str:
@@ -95,6 +161,14 @@ class TAPEDataModule(pl.LightningDataModule):
     @property
     def num_workers(self) -> int:
         return self._num_workers
+
+    @property
+    def use_msa(self) -> bool:
+        return self._use_msa
+
+    @property
+    def max_tokens_per_msa(self) -> int:
+        return self._max_tokens_per_msa
 
 
 class TAPEPredictorBase(pl.LightningModule):
@@ -183,6 +257,18 @@ class TAPEPredictorBase(pl.LightningModule):
         )
         return parser
 
+    @abstractclassmethod
+    def from_argparse_args(
+        cls,
+        args: Namespace,
+        base_model: nn.Module,
+        extract_features: Callable[
+            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
+        ],
+        embedding_dim: int,
+    ):
+        raise NotImplementedError
+
     def forward(self, src_tokens, src_lengths):
         # B x L x D
         features = self.extract_features(src_tokens, src_lengths)
@@ -220,3 +306,47 @@ class TAPEPredictorBase(pl.LightningModule):
 
         scheduler_dict = {"scheduler": scheduler, "interval": "step"}
         return [optimizer], [scheduler_dict]
+
+
+class TAPETask:
+    def __init__(
+        self,
+        task_name: str,
+        task_data_type: Type[TAPEDataModule],
+        task_model_type: Type[TAPEPredictorBase],
+    ):
+        self.task_name = task_name
+        self.task_data_type = task_data_type
+        self.task_model_type = task_model_type
+
+    def __str__(self):
+        return f"TAPETask: {self.task_name}"
+
+    def add_args(self, parser: ArgumentParser) -> ArgumentParser:
+        parser = self.task_data_type.add_args(parser)
+        parser = self.task_model_type.add_args(parser)
+        return parser
+
+    def build_data(self, args: Namespace) -> TAPEDataModule:
+        return self.task_data_type(
+            data_dir=args.data_dir,
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            tokenizer=args.tokenizer,
+            use_msa=args.use_msa,
+            max_tokens_per_msa=args.max_tokens_per_msa,
+        )
+
+    def build_model(
+        self,
+        args: Namespace,
+        base_model: nn.Module,
+        extract_features,
+        embedding_dim: int,
+    ) -> TAPEPredictorBase:
+        return self.task_model_type.from_argparse_args(  # type: ignore
+            args=args,
+            base_model=base_model,
+            extract_features=extract_features,
+            embedding_dim=embedding_dim,
+        )

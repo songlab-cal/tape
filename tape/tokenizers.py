@@ -105,6 +105,8 @@ class TAPETokenizer():
             self.vocab = IUPAC_VOCAB
         elif vocab == 'unirep':
             self.vocab = UNIREP_VOCAB
+        else:
+            raise ValueError(f"Unrecognized vocab {vocab}")
         self.tokens = list(self.vocab.keys())
         self._vocab_type = vocab
         assert self.start_token in self.vocab and self.stop_token in self.vocab
@@ -178,9 +180,9 @@ class TAPETokenizer():
 class FairseqTokenizer(TAPETokenizer):
     def __init__(self, path: PathLike):
         from fairseq.data import Dictionary
-        self.vocab = Dictionary.load(path)
+        self.vocab: Dictionary = Dictionary.load(path)
         self.vocab.add_symbol("<mask>")
-        self.tokens = self.dictionary.symbols
+        self.tokens = self.vocab.symbols
 
     @property
     def start_token(self) -> str:

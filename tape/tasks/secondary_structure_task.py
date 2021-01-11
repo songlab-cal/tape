@@ -1,45 +1,46 @@
 from typing import Union, Dict, List, Callable, Optional
-from pathlib import Path
-from argparse import ArgumentParser
+from argparse import ArgumentParser, Namespace
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.utils.rnn as rnn
-from torch.utils.data import Dataset
 import pytorch_lightning as pl
 
-from tape.datasets import LMDBDataset
 from tape.tokenizers import TAPETokenizer
 from ..utils import pad_sequences, PathLike, TensorDict
-from .tape_task import TAPEDataModule, TAPEPredictorBase, DEFAULT_DATA_DIR
+from .tape_task import (
+    TAPEDataset,
+    TAPEDataModule,
+    TAPEPredictorBase,
+    TAPETask,
+)
 
 
-class SecondaryStructureDataset(Dataset):
+class SecondaryStructureDataset(TAPEDataset):
     def __init__(
         self,
         data_path: PathLike,
         split: str,
         tokenizer: Union[str, TAPETokenizer] = "iupac",
+        use_msa: bool = False,
+        max_tokens_per_msa: int = 2 ** 14,
     ):
-        super().__init__()
+        super().__init__(
+            data_path=data_path,
+            split=split,
+            tokenizer=tokenizer,
+            use_msa=use_msa,
+            max_tokens_per_msa=max_tokens_per_msa,
+        )
 
-        if split not in ("train", "valid", "casp12", "ts115", "cb513"):
-            raise ValueError(
-                f"Unrecognized split: {split}. Must be one of "
-                f"['train', 'valid', 'casp12', "
-                f"'ts115', 'cb513']"
-            )
-        if isinstance(tokenizer, str):
-            tokenizer = TAPETokenizer(vocab=tokenizer)
-        self.tokenizer = tokenizer
+    @property
+    def task_name(self) -> str:
+        return "secondary_structure"
 
-        data_path = Path(data_path)
-        data_file = f"secondary_structure/secondary_structure_{split}.lmdb"
-        self.data = LMDBDataset(data_path / data_file)
-
-    def __len__(self) -> int:
-        return len(self.data)
+    @property
+    def splits(self) -> List[str]:
+        return ["train", "valid", "cb513", "ts115", "casp12"]
 
     def __getitem__(self, index: int) -> TensorDict:
         item = self.data[index]
@@ -111,21 +112,13 @@ class SecondaryStructureDataset(Dataset):
 
 
 class SecondaryStructureDataModule(TAPEDataModule):
-    def __init__(
-        self,
-        data_dir: PathLike = DEFAULT_DATA_DIR,
-        batch_size: int = 64,
-        num_workers: int = 3,
-        tokenizer: str = "iupac",
-    ):
-        super().__init__(
-            data_url="http://s3.amazonaws.com/proteindata/data_pytorch/secondary_structure.tar.gz",  # noqa: E501
-            task_name="secondary_structure",
-            data_dir=data_dir,
-            batch_size=batch_size,
-            num_workers=num_workers,
-            tokenizer=tokenizer,
-        )
+    @property
+    def data_url(self) -> str:
+        return "http://s3.amazonaws.com/proteindata/data_pytorch/secondary_structure.tar.gz"  # noqa: E501
+
+    @property
+    def task_name(self) -> str:
+        return "secondary_structure"
 
     def train_dataloader(self):
         dataset = SecondaryStructureDataset(self.data_dir, "train", self.tokenizer)
@@ -227,6 +220,31 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
             help="Dropout on conv layers",
         )
         return parser
+
+    @classmethod
+    def from_argparse_args(
+        cls,
+        args: Namespace,
+        base_model: nn.Module,
+        extract_features: Callable[
+            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
+        ],
+        embedding_dim: int,
+    ):
+        return cls(
+            base_model=base_model,
+            extract_features=extract_features,
+            embedding_dim=embedding_dim,
+            freeze_base=args.freeze_base,
+            optimizer=args.optimizer,
+            learning_rate=args.learning_rate,
+            weight_decay=args.weight_decay,
+            lr_scheduler=args.lr_scheduler,
+            warmup_steps=args.warmup_steps,
+            max_steps=args.max_steps,
+            conv_dropout=args.conv_dropout,
+            lstm_dropout=args.lstm_dropout,
+        )
 
     def forward(self, src_tokens, src_lengths):
         # B x L x D
@@ -355,3 +373,10 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
     def test_step_end(self, outputs):
         self.compute_and_log_accuracy(outputs, "test")
         return outputs["loss"]
+
+
+SecondaryStructureTask = TAPETask(
+    "secondary_structure",
+    SecondaryStructureDataModule,  # type: ignore
+    SecondaryStructurePredictor,
+)
