@@ -15,15 +15,5 @@ from .utils import http_get  # noqa: F401
 from .utils import pad_sequences  # noqa: F401
 from .utils import seqlen_mask  # noqa: F401
 
-from .setup_utils import setup_logging  # noqa: F401
-from .setup_utils import setup_optimizer  # noqa: F401
-from .setup_utils import setup_dataset  # noqa: F401
-from .setup_utils import setup_loader  # noqa: F401
-from .setup_utils import setup_distributed  # noqa: F401
-
-from .distributed_utils import barrier_if_distributed  # noqa: F401
-from .distributed_utils import reduce_scalar  # noqa: F401
-from .distributed_utils import launch_process_group  # noqa: F401
-
 from .typing_utils import PathLike  # noqa: F401
 from .typing_utils import TensorDict  # noqa: F401
