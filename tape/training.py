@@ -1,8 +1,8 @@
 from argparse import ArgumentParser, Namespace
-import torch
 import sys
 import logging
 from tape import tasks
+from tape.models.modeling_utils import ProteinModel
 
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.INFO)
@@ -27,9 +27,8 @@ def maybe_unset_distributed(args: Namespace) -> None:
         args.distributed_backend = None
 
 
-def train():
+def train(base_model: ProteinModel):
     import pytorch_lightning as pl
-    from tape.models.modeling_bert import ProteinBertModel
 
     # Initialize parser
     parser = ArgumentParser()
@@ -58,7 +57,6 @@ def train():
     args = parser.parse_args()
     maybe_unset_distributed(args)
     task_data = task.build_data(args)
-    base_model = ProteinBertModel.from_pretrained("bert-base")
     task_model = task.build_model(args, base_model)
 
     kwargs = {}
@@ -86,9 +84,10 @@ def train():
         callbacks=[early_stopping_callback],
         **kwargs
     )
-    torch.autograd.set_detect_anomaly(True)
-    trainer.fit(task_model, task_data)
+    trainer.fit(task_model, datamodule=task_data)
 
 
 if __name__ == "__main__":
-    train()
+    from tape.models.modeling_bert import ProteinBertModel
+    base_model = ProteinBertModel.from_pretrained("bert-base")
+    train(base_model)

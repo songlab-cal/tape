@@ -192,7 +192,7 @@ class FluorescencePredictor(TAPEPredictorBase):
         features = self.base_model.extract_features(src_tokens, src_lengths)
         attention_weights = self.compute_attention_weights(features)
         attention_weights /= math.sqrt(features.size(2))
-        mask = seqlen_mask(features, src_lengths - 2)
+        mask = seqlen_mask(features, src_lengths - (src_tokens.size(1) - features.size(1)))
         attention_weights = attention_weights.masked_fill(~mask.unsqueeze(2), -10000)
         attention_weights = attention_weights.softmax(1)
         attention_weights = self.dropout(attention_weights)
