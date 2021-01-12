@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Callable, Optional, Type
+from typing import Union, Dict, List, Type
 import math
 from pathlib import Path
 from argparse import ArgumentParser, Namespace
@@ -9,6 +9,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 from Bio.Align import PairwiseAligner, substitution_matrices
 
+from ..models.modeling_utils import ProteinModel
 from ..tokenizers import TAPETokenizer
 from ..utils import (
     pad_sequences,
@@ -94,7 +95,7 @@ class FluorescenceDataset(TAPEDataset):
     def collate_fn(
         self, batch: List[TensorDict]
     ) -> Dict[str, Union[torch.Tensor, TensorDict]]:
-        src_tokens = pad_sequences([el["src_tokens"] for el in batch])
+        src_tokens = pad_sequences([el["src_tokens"] for el in batch], self.pad_idx)
         src_lengths = torch.tensor(
             [len(el["src_tokens"]) for el in batch], dtype=torch.long
         )
@@ -128,11 +129,7 @@ class FluorescenceDataModule(TAPEDataModule):
 class FluorescencePredictor(TAPEPredictorBase):
     def __init__(
         self,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
         freeze_base: bool = False,
         optimizer: str = "adam",
         learning_rate: float = 1e-3,
@@ -145,8 +142,6 @@ class FluorescencePredictor(TAPEPredictorBase):
     ):
         super().__init__(
             base_model=base_model,
-            extract_features=extract_features,
-            embedding_dim=embedding_dim,
             freeze_base=freeze_base,
             optimizer=optimizer,
             learning_rate=learning_rate,
@@ -160,10 +155,10 @@ class FluorescencePredictor(TAPEPredictorBase):
             "hidden_size",
         )
 
-        self.compute_attention_weights = nn.Linear(embedding_dim, 1)
+        self.compute_attention_weights = nn.Linear(self.embedding_dim, 1)
         self.dropout = nn.Dropout(dropout)
         self.mlp = nn.Sequential(
-            nn.Linear(embedding_dim, hidden_size),
+            nn.Linear(self.embedding_dim, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, 1),
         )
@@ -194,7 +189,7 @@ class FluorescencePredictor(TAPEPredictorBase):
 
     def forward(self, src_tokens, src_lengths):
         # B x L x D
-        features = self.extract_features(src_tokens, src_lengths)
+        features = self.base_model.extract_features(src_tokens, src_lengths)
         attention_weights = self.compute_attention_weights(features)
         attention_weights /= math.sqrt(features.size(2))
         mask = seqlen_mask(features, src_lengths - 2)
@@ -257,16 +252,10 @@ class FluorescencePredictor(TAPEPredictorBase):
     def from_argparse_args(
         cls,
         args: Namespace,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
     ):
         return cls(
             base_model=base_model,
-            extract_features=extract_features,
-            embedding_dim=embedding_dim,
             freeze_base=args.freeze_base,
             optimizer=args.optimizer,
             learning_rate=args.learning_rate,

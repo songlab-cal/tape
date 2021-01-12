@@ -1,4 +1,4 @@
-from typing import Union, Dict, List, Callable, Optional, Type
+from typing import Union, Dict, List, Type
 from argparse import ArgumentParser, Namespace
 
 import numpy as np
@@ -8,6 +8,7 @@ import torch.nn.utils.rnn as rnn
 import pytorch_lightning as pl
 
 from tape.tokenizers import TAPETokenizer
+from ..models.modeling_utils import ProteinModel
 from ..utils import pad_sequences, PathLike, TensorDict
 from .tape_task import (
     TAPEDataset,
@@ -84,7 +85,7 @@ class SecondaryStructureDataset(TAPEDataset):
         self, batch: List[TensorDict]
     ) -> Dict[str, Union[torch.Tensor, TensorDict]]:
         batch_size = len(batch)
-        src_tokens = pad_sequences([el["src_tokens"] for el in batch])
+        src_tokens = pad_sequences([el["src_tokens"] for el in batch], self.pad_idx)
         src_lengths = torch.tensor(
             [len(el["src_tokens"]) for el in batch], dtype=torch.long
         )
@@ -134,11 +135,7 @@ class SecondaryStructureDataModule(TAPEDataModule):
 class SecondaryStructurePredictor(TAPEPredictorBase):
     def __init__(
         self,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
         freeze_base: bool = False,
         optimizer: str = "adam",
         learning_rate: float = 1e-3,
@@ -151,8 +148,6 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
     ):
         super().__init__(
             base_model=base_model,
-            extract_features=extract_features,
-            embedding_dim=embedding_dim,
             freeze_base=freeze_base,
             optimizer=optimizer,
             learning_rate=learning_rate,
@@ -171,16 +166,16 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
 
         self.conv1 = nn.Sequential(
             nn.Dropout(conv_dropout),
-            nn.Conv1d(embedding_dim, 32, kernel_size=129, padding=64),
+            nn.Conv1d(self.embedding_dim, 32, kernel_size=129, padding=64),
             nn.ReLU(inplace=True),
         )
         self.conv2 = nn.Sequential(
             nn.Dropout(conv_dropout),
-            nn.Conv1d(embedding_dim, 32, kernel_size=257, padding=128),
+            nn.Conv1d(self.embedding_dim, 32, kernel_size=257, padding=128),
             nn.ReLU(inplace=True),
         )
         self.lstm = nn.LSTM(
-            embedding_dim + 64,
+            self.embedding_dim + 64,
             1024,
             num_layers=2,
             bidirectional=True,
@@ -218,16 +213,10 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
     def from_argparse_args(
         cls,
         args: Namespace,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
     ):
         return cls(
             base_model=base_model,
-            extract_features=extract_features,
-            embedding_dim=embedding_dim,
             freeze_base=args.freeze_base,
             optimizer=args.optimizer,
             learning_rate=args.learning_rate,
@@ -241,7 +230,7 @@ class SecondaryStructurePredictor(TAPEPredictorBase):
 
     def forward(self, src_tokens, src_lengths):
         # B x L x D
-        features = self.extract_features(src_tokens, src_lengths)
+        features = self.base_model.extract_features(src_tokens, src_lengths)
         num_removed_tokens = src_tokens.size(1) - features.size(1)
         # B x L x D -> B x D x L
         features = features.transpose(1, 2)

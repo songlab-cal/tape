@@ -25,6 +25,7 @@ import torch
 from torch import nn
 from torch.utils.checkpoint import checkpoint
 
+from .. import utils
 from .modeling_utils import ProteinConfig
 from .modeling_utils import ProteinModel
 from .modeling_utils import prune_linear_layer
@@ -392,6 +393,13 @@ class ProteinBertAbstractModel(ProteinModel):
             module.weight.data.fill_(1.0)
         if isinstance(module, nn.Linear) and module.bias is not None:
             module.bias.data.zero_()
+
+    def extract_features(self, src_tokens, src_lengths):
+        return self(src_tokens, utils.seqlen_mask(src_tokens, src_lengths))[0][:, 1:-1]
+
+    @property
+    def embedding_dim(self) -> int:
+        return self.config.hidden_size
 
 
 class ProteinBertModel(ProteinBertAbstractModel):

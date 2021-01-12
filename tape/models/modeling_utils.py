@@ -15,8 +15,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """PyTorch Protein models."""
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
+from __future__ import absolute_import, division, print_function, unicode_literals
+from abc import abstractmethod, abstractproperty
 import typing
 import copy
 import json
@@ -39,42 +39,45 @@ logger = logging.getLogger(__name__)
 
 
 class ProteinConfig(object):
-    """ Base class for all configuration classes.
-        Handles a few parameters common to all models' configurations as well as methods
-        for loading/downloading/saving configurations.
+    """Base class for all configuration classes.
+    Handles a few parameters common to all models' configurations as well as methods
+    for loading/downloading/saving configurations.
 
-        Class attributes (overridden by derived classes):
-            - ``pretrained_config_archive_map``: a python ``dict`` of with `short-cut-names`
-                (string) as keys and `url` (string) of associated pretrained model
-                configurations as values.
+    Class attributes (overridden by derived classes):
+        - ``pretrained_config_archive_map``: a python ``dict`` of with `short-cut-names`
+            (string) as keys and `url` (string) of associated pretrained model
+            configurations as values.
 
-        Parameters:
-            ``finetuning_task``: string, default `None`. Name of the task used to fine-tune
-                the model.
-            ``num_labels``: integer, default `2`. Number of classes to use when the model is
-                a classification model (sequences/tokens)
-            ``output_attentions``: boolean, default `False`. Should the model returns
-                attentions weights.
-            ``output_hidden_states``: string, default `False`. Should the model returns all
-                hidden-states.
-            ``torchscript``: string, default `False`. Is the model used with Torchscript.
+    Parameters:
+        ``finetuning_task``: string, default `None`. Name of the task used to fine-tune
+            the model.
+        ``num_labels``: integer, default `2`. Number of classes to use when the model is
+            a classification model (sequences/tokens)
+        ``output_attentions``: boolean, default `False`. Should the model returns
+            attentions weights.
+        ``output_hidden_states``: string, default `False`. Should the model returns all
+            hidden-states.
+        ``torchscript``: string, default `False`. Is the model used with Torchscript.
     """
+
     pretrained_config_archive_map: typing.Dict[str, str] = {}
 
     def __init__(self, **kwargs):
-        self.finetuning_task = kwargs.pop('finetuning_task', None)
-        self.num_labels = kwargs.pop('num_labels', 2)
-        self.output_attentions = kwargs.pop('output_attentions', False)
-        self.output_hidden_states = kwargs.pop('output_hidden_states', False)
-        self.torchscript = kwargs.pop('torchscript', False)
+        self.finetuning_task = kwargs.pop("finetuning_task", None)
+        self.num_labels = kwargs.pop("num_labels", 2)
+        self.output_attentions = kwargs.pop("output_attentions", False)
+        self.output_hidden_states = kwargs.pop("output_hidden_states", False)
+        self.torchscript = kwargs.pop("torchscript", False)
 
     def save_pretrained(self, save_directory):
-        """ Save a configuration object to the directory `save_directory`, so that it
-            can be re-loaded using the :func:`~ProteinConfig.from_pretrained`
-            class method.
+        """Save a configuration object to the directory `save_directory`, so that it
+        can be re-loaded using the :func:`~ProteinConfig.from_pretrained`
+        class method.
         """
-        assert os.path.isdir(save_directory), "Saving path should be a directory where the " \
-                                              "model and configuration can be saved"
+        assert os.path.isdir(save_directory), (
+            "Saving path should be a directory where the "
+            "model and configuration can be saved"
+        )
 
         # If we save using the predefined names, we can load using `from_pretrained`
         output_config_file = os.path.join(save_directory, CONFIG_NAME)
@@ -83,7 +86,7 @@ class ProteinConfig(object):
 
     @classmethod
     def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
-        r""" Instantiate a :class:`~ProteinConfig`
+        r"""Instantiate a :class:`~ProteinConfig`
              (or a derived class) from a pre-trained model configuration.
 
         Parameters:
@@ -137,11 +140,13 @@ class ProteinConfig(object):
             assert unused_kwargs == {'foo': False}
 
         """
-        cache_dir = kwargs.pop('cache_dir', None)
-        return_unused_kwargs = kwargs.pop('return_unused_kwargs', False)
+        cache_dir = kwargs.pop("cache_dir", None)
+        return_unused_kwargs = kwargs.pop("return_unused_kwargs", False)
 
         if pretrained_model_name_or_path in cls.pretrained_config_archive_map:
-            config_file = cls.pretrained_config_archive_map[pretrained_model_name_or_path]
+            config_file = cls.pretrained_config_archive_map[
+                pretrained_model_name_or_path
+            ]
         elif os.path.isdir(pretrained_model_name_or_path):
             config_file = os.path.join(pretrained_model_name_or_path, CONFIG_NAME)
         else:
@@ -151,22 +156,29 @@ class ProteinConfig(object):
             resolved_config_file = cached_path(config_file, cache_dir=cache_dir)
         except EnvironmentError:
             if pretrained_model_name_or_path in cls.pretrained_config_archive_map:
-                logger.error("Couldn't reach server at '{}' to download pretrained model "
-                             "configuration file.".format(config_file))
+                logger.error(
+                    "Couldn't reach server at '{}' to download pretrained model "
+                    "configuration file.".format(config_file)
+                )
             else:
                 logger.error(
                     "Model name '{}' was not found in model name list ({}). "
                     "We assumed '{}' was a path or url but couldn't find any file "
                     "associated to this path or url.".format(
                         pretrained_model_name_or_path,
-                        ', '.join(cls.pretrained_config_archive_map.keys()),
-                        config_file))
+                        ", ".join(cls.pretrained_config_archive_map.keys()),
+                        config_file,
+                    )
+                )
             return None
         if resolved_config_file == config_file:
             logger.info("loading configuration file {}".format(config_file))
         else:
-            logger.info("loading configuration file {} from cache at {}".format(
-                config_file, resolved_config_file))
+            logger.info(
+                "loading configuration file {} from cache at {}".format(
+                    config_file, resolved_config_file
+                )
+            )
 
         # Load config
         config = cls.from_json_file(resolved_config_file)
@@ -197,7 +209,7 @@ class ProteinConfig(object):
     @classmethod
     def from_json_file(cls, json_file):
         """Constructs a `BertConfig` from a json file of parameters."""
-        with open(json_file, "r", encoding='utf-8') as reader:
+        with open(json_file, "r", encoding="utf-8") as reader:
             text = reader.read()
         return cls.from_dict(json.loads(text))
 
@@ -218,27 +230,27 @@ class ProteinConfig(object):
 
     def to_json_file(self, json_file_path):
         """ Save this instance to a json file."""
-        with open(json_file_path, "w", encoding='utf-8') as writer:
+        with open(json_file_path, "w", encoding="utf-8") as writer:
             writer.write(self.to_json_string())
 
 
 class ProteinModel(nn.Module):
-    r""" Base class for all models.
+    r"""Base class for all models.
 
-        :class:`~ProteinModel` takes care of storing the configuration of
-        the models and handles methods for loading/downloading/saving models as well as a
-        few methods commons to all models to (i) resize the input embeddings and (ii) prune
-        heads in the self-attention heads.
+    :class:`~ProteinModel` takes care of storing the configuration of
+    the models and handles methods for loading/downloading/saving models as well as a
+    few methods commons to all models to (i) resize the input embeddings and (ii) prune
+    heads in the self-attention heads.
 
-        Class attributes (overridden by derived classes):
-            - ``config_class``: a class derived from :class:`~ProteinConfig`
-              to use as configuration class for this model architecture.
-            - ``pretrained_model_archive_map``: a python ``dict`` of with `short-cut-names`
-              (string) as keys and `url` (string) of associated pretrained weights as values.
+    Class attributes (overridden by derived classes):
+        - ``config_class``: a class derived from :class:`~ProteinConfig`
+          to use as configuration class for this model architecture.
+        - ``pretrained_model_archive_map``: a python ``dict`` of with `short-cut-names`
+          (string) as keys and `url` (string) of associated pretrained weights as values.
 
-            - ``base_model_prefix``: a string indicating the attribute associated to the
-              base model in derived classes of the same architecture adding modules on top
-              of the base model.
+        - ``base_model_prefix``: a string indicating the attribute associated to the
+          base model in derived classes of the same architecture adding modules on top
+          of the base model.
     """
     config_class: typing.Type[ProteinConfig] = ProteinConfig
     pretrained_model_archive_map: typing.Dict[str, str] = {}
@@ -252,12 +264,13 @@ class ProteinModel(nn.Module):
                 "`ProteinConfig`. To create a model from a pretrained model use "
                 "`model = {}.from_pretrained(PRETRAINED_MODEL_NAME)`".format(
                     self.__class__.__name__, self.__class__.__name__
-                ))
+                )
+            )
         # Save config in model
         self.config = config
 
     def _get_resized_embeddings(self, old_embeddings, new_num_tokens=None):
-        """ Build a resized Embedding Module from a provided token Embedding Module.
+        """Build a resized Embedding Module from a provided token Embedding Module.
             Increasing the size will add newly initialized vectors at the end
             Reducing the size will remove vectors from the end
 
@@ -287,21 +300,21 @@ class ProteinModel(nn.Module):
 
         # Copy word embeddings from the previous weights
         num_tokens_to_copy = min(old_num_tokens, new_num_tokens)
-        new_embeddings.weight.data[:num_tokens_to_copy, :] = \
-            old_embeddings.weight.data[:num_tokens_to_copy, :]
+        new_embeddings.weight.data[:num_tokens_to_copy, :] = old_embeddings.weight.data[
+            :num_tokens_to_copy, :
+        ]
 
         return new_embeddings
 
     def _tie_or_clone_weights(self, first_module, second_module):
-        """ Tie or clone module weights depending of weither we are using TorchScript or not
-        """
+        """Tie or clone module weights depending of weither we are using TorchScript or not"""
         if self.config.torchscript:
             first_module.weight = nn.Parameter(second_module.weight.clone())
         else:
             first_module.weight = second_module.weight
 
     def resize_token_embeddings(self, new_num_tokens=None):
-        """ Resize input token embeddings matrix of the model if
+        """Resize input token embeddings matrix of the model if
             new_num_tokens != config.vocab_size. Take care of tying weights embeddings
             afterwards if the model class has a `tie_weights()` method.
 
@@ -316,7 +329,9 @@ class ProteinModel(nn.Module):
         Return: ``torch.nn.Embeddings``
             Pointer to the input tokens Embeddings Module of the model
         """
-        base_model = getattr(self, self.base_model_prefix, self)  # get the base model if needed
+        base_model = getattr(
+            self, self.base_model_prefix, self
+        )  # get the base model if needed
         model_embeds = base_model._resize_token_embeddings(new_num_tokens)
         if new_num_tokens is None:
             return model_embeds
@@ -326,7 +341,7 @@ class ProteinModel(nn.Module):
         base_model.vocab_size = new_num_tokens
 
         # Tie weights again if needed
-        if hasattr(self, 'tie_weights'):
+        if hasattr(self, "tie_weights"):
             self.tie_weights()
 
         return model_embeds
@@ -337,31 +352,35 @@ class ProteinModel(nn.Module):
         self.apply(self._init_weights)
 
         # Prune heads if needed
-        if getattr(self.config, 'pruned_heads', False):
+        if getattr(self.config, "pruned_heads", False):
             self.prune_heads(self.config.pruned_heads)
 
     def prune_heads(self, heads_to_prune):
-        """ Prunes heads of the base model.
+        """Prunes heads of the base model.
 
-            Arguments:
+        Arguments:
 
-                heads_to_prune: dict with keys being selected layer indices (`int`) and
-                    associated values being the list of heads to prune in said layer
-                    (list of `int`).
+            heads_to_prune: dict with keys being selected layer indices (`int`) and
+                associated values being the list of heads to prune in said layer
+                (list of `int`).
         """
-        base_model = getattr(self, self.base_model_prefix, self)  # get the base model if needed
+        base_model = getattr(
+            self, self.base_model_prefix, self
+        )  # get the base model if needed
         base_model._prune_heads(heads_to_prune)
 
     def save_pretrained(self, save_directory):
-        """ Save a model and its configuration file to a directory, so that it
-            can be re-loaded using the `:func:`~ProteinModel.from_pretrained`
-            ` class method.
+        """Save a model and its configuration file to a directory, so that it
+        can be re-loaded using the `:func:`~ProteinModel.from_pretrained`
+        ` class method.
         """
-        assert os.path.isdir(save_directory), "Saving path should be a directory where "\
-                                              "the model and configuration can be saved"
+        assert os.path.isdir(save_directory), (
+            "Saving path should be a directory where "
+            "the model and configuration can be saved"
+        )
 
         # Only save the model it-self if we are using distributed training
-        model_to_save = self.module if hasattr(self, 'module') else self
+        model_to_save = self.module if hasattr(self, "module") else self
 
         # Save configuration file
         model_to_save.config.save_pretrained(save_directory)
@@ -465,10 +484,10 @@ class ProteinModel(nn.Module):
             assert model.config.output_attention == True
 
         """
-        config = kwargs.pop('config', None)
-        state_dict = kwargs.pop('state_dict', None)
-        cache_dir = kwargs.pop('cache_dir', None)
-        output_loading_info = kwargs.pop('output_loading_info', False)
+        config = kwargs.pop("config", None)
+        state_dict = kwargs.pop("state_dict", None)
+        cache_dir = kwargs.pop("cache_dir", None)
+        output_loading_info = kwargs.pop("output_loading_info", False)
 
         force_download = kwargs.pop("force_download", False)
         kwargs.pop("resume_download", False)
@@ -476,61 +495,73 @@ class ProteinModel(nn.Module):
         # Load config
         if config is None:
             config, model_kwargs = cls.config_class.from_pretrained(
-                pretrained_model_name_or_path, *model_args,
-                cache_dir=cache_dir, return_unused_kwargs=True,
+                pretrained_model_name_or_path,
+                *model_args,
+                cache_dir=cache_dir,
+                return_unused_kwargs=True,
                 # force_download=force_download,
                 # resume_download=resume_download,
-                **kwargs
+                **kwargs,
             )
         else:
             model_kwargs = kwargs
 
         # Load model
         if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
-            archive_file = cls.pretrained_model_archive_map[pretrained_model_name_or_path]
+            archive_file = cls.pretrained_model_archive_map[
+                pretrained_model_name_or_path
+            ]
         elif os.path.isdir(pretrained_model_name_or_path):
             archive_file = os.path.join(pretrained_model_name_or_path, WEIGHTS_NAME)
         else:
             archive_file = pretrained_model_name_or_path
         # redirect to the cache, if necessary
         try:
-            resolved_archive_file = cached_path(archive_file, cache_dir=cache_dir,
-                                                force_download=force_download)
+            resolved_archive_file = cached_path(
+                archive_file, cache_dir=cache_dir, force_download=force_download
+            )
         except EnvironmentError:
             if pretrained_model_name_or_path in cls.pretrained_model_archive_map:
                 logger.error(
                     "Couldn't reach server at '{}' to download pretrained weights.".format(
-                        archive_file))
+                        archive_file
+                    )
+                )
             else:
                 logger.error(
                     "Model name '{}' was not found in model name list ({}). "
                     "We assumed '{}' was a path or url but couldn't find any file "
                     "associated to this path or url.".format(
                         pretrained_model_name_or_path,
-                        ', '.join(cls.pretrained_model_archive_map.keys()),
-                        archive_file))
+                        ", ".join(cls.pretrained_model_archive_map.keys()),
+                        archive_file,
+                    )
+                )
             return None
         if resolved_archive_file == archive_file:
             logger.info("loading weights file {}".format(archive_file))
         else:
-            logger.info("loading weights file {} from cache at {}".format(
-                archive_file, resolved_archive_file))
+            logger.info(
+                "loading weights file {} from cache at {}".format(
+                    archive_file, resolved_archive_file
+                )
+            )
 
         # Instantiate model.
         model = cls(config, *model_args, **model_kwargs)
 
         if state_dict is None:
-            state_dict = torch.load(resolved_archive_file, map_location='cpu')
+            state_dict = torch.load(resolved_archive_file, map_location="cpu")
 
         # Convert old format to new format if needed from a PyTorch state_dict
         old_keys = []
         new_keys = []
         for key in state_dict.keys():
             new_key = None
-            if 'gamma' in key:
-                new_key = key.replace('gamma', 'weight')
-            if 'beta' in key:
-                new_key = key.replace('beta', 'bias')
+            if "gamma" in key:
+                new_key = key.replace("gamma", "weight")
+            if "beta" in key:
+                new_key = key.replace("beta", "bias")
             if new_key:
                 old_keys.append(key)
                 new_keys.append(new_key)
@@ -542,43 +573,60 @@ class ProteinModel(nn.Module):
         unexpected_keys = []
         error_msgs = []
         # copy state_dict so _load_from_state_dict can modify it
-        metadata = getattr(state_dict, '_metadata', None)
+        metadata = getattr(state_dict, "_metadata", None)
         state_dict = state_dict.copy()
         if metadata is not None:
             state_dict._metadata = metadata
 
-        def load(module, prefix=''):
+        def load(module, prefix=""):
             local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
             module._load_from_state_dict(
-                state_dict, prefix, local_metadata, True, missing_keys,
-                unexpected_keys, error_msgs)
+                state_dict,
+                prefix,
+                local_metadata,
+                True,
+                missing_keys,
+                unexpected_keys,
+                error_msgs,
+            )
             for name, child in module._modules.items():
                 if child is not None:
-                    load(child, prefix + name + '.')
+                    load(child, prefix + name + ".")
 
         # Make sure we are able to load base models as well as derived models (with heads)
-        start_prefix = ''
+        start_prefix = ""
         model_to_load = model
-        if cls.base_model_prefix not in (None, ''):
-            if not hasattr(model, cls.base_model_prefix) and \
-                    any(s.startswith(cls.base_model_prefix) for s in state_dict.keys()):
-                start_prefix = cls.base_model_prefix + '.'
-            if hasattr(model, cls.base_model_prefix) and \
-                    not any(s.startswith(cls.base_model_prefix) for s in state_dict.keys()):
+        if cls.base_model_prefix not in (None, ""):
+            if not hasattr(model, cls.base_model_prefix) and any(
+                s.startswith(cls.base_model_prefix) for s in state_dict.keys()
+            ):
+                start_prefix = cls.base_model_prefix + "."
+            if hasattr(model, cls.base_model_prefix) and not any(
+                s.startswith(cls.base_model_prefix) for s in state_dict.keys()
+            ):
                 model_to_load = getattr(model, cls.base_model_prefix)
 
         load(model_to_load, prefix=start_prefix)
         if len(missing_keys) > 0:
-            logger.info("Weights of {} not initialized from pretrained model: {}".format(
-                model.__class__.__name__, missing_keys))
+            logger.info(
+                "Weights of {} not initialized from pretrained model: {}".format(
+                    model.__class__.__name__, missing_keys
+                )
+            )
         if len(unexpected_keys) > 0:
-            logger.info("Weights from pretrained model not used in {}: {}".format(
-                model.__class__.__name__, unexpected_keys))
+            logger.info(
+                "Weights from pretrained model not used in {}: {}".format(
+                    model.__class__.__name__, unexpected_keys
+                )
+            )
         if len(error_msgs) > 0:
-            raise RuntimeError('Error(s) in loading state_dict for {}:\n\t{}'.format(
-                               model.__class__.__name__, "\n\t".join(error_msgs)))
+            raise RuntimeError(
+                "Error(s) in loading state_dict for {}:\n\t{}".format(
+                    model.__class__.__name__, "\n\t".join(error_msgs)
+                )
+            )
 
-        if hasattr(model, 'tie_weights'):
+        if hasattr(model, "tie_weights"):
             model.tie_weights()  # make sure word embedding weights are still tied
 
         # Set model in evaluation mode to desactivate DropOut modules by default
@@ -588,16 +636,27 @@ class ProteinModel(nn.Module):
             loading_info = {
                 "missing_keys": missing_keys,
                 "unexpected_keys": unexpected_keys,
-                "error_msgs": error_msgs}
+                "error_msgs": error_msgs,
+            }
             return model, loading_info
 
         return model
 
+    @abstractmethod
+    def extract_features(
+        self, src_tokens: torch.Tensor, src_lengths: torch.Tensor
+    ) -> torch.Tensor:
+        raise NotImplementedError
+
+    @abstractproperty
+    def embedding_dim(self) -> int:
+        raise NotImplementedError
+
 
 def prune_linear_layer(layer, index, dim=0):
-    """ Prune a linear layer (a model parameters) to keep only entries in index.
-        Return the pruned layer as a new layer with requires_grad=True.
-        Used to remove heads.
+    """Prune a linear layer (a model parameters) to keep only entries in index.
+    Return the pruned layer as a new layer with requires_grad=True.
+    Used to remove heads.
     """
     index = index.to(layer.weight.device)
     W = layer.weight.index_select(dim, index).clone().detach()
@@ -608,8 +667,9 @@ def prune_linear_layer(layer, index, dim=0):
             b = layer.bias[index].clone().detach()
     new_size = list(layer.weight.size())
     new_size[dim] = len(index)
-    new_layer = nn.Linear(
-        new_size[1], new_size[0], bias=layer.bias is not None).to(layer.weight.device)
+    new_layer = nn.Linear(new_size[1], new_size[0], bias=layer.bias is not None).to(
+        layer.weight.device
+    )
     new_layer.weight.requires_grad = False
     new_layer.weight.copy_(W.contiguous())
     new_layer.weight.requires_grad = True
@@ -622,7 +682,7 @@ def prune_linear_layer(layer, index, dim=0):
 
 def accuracy(logits, labels, ignore_index: int = -100):
     with torch.no_grad():
-        valid_mask = (labels != ignore_index)
+        valid_mask = labels != ignore_index
         predictions = logits.float().argmax(-1)
         correct = (predictions == labels) * valid_mask
         return correct.sum().float() / valid_mask.sum().float()
@@ -630,10 +690,10 @@ def accuracy(logits, labels, ignore_index: int = -100):
 
 def gelu(x):
     """Implementation of the gelu activation function.
-        For information: OpenAI GPT's gelu is slightly different
-            (and gives slightly different results):
-        0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
-        Also see https://arxiv.org/abs/1606.08415
+    For information: OpenAI GPT's gelu is slightly different
+        (and gives slightly different results):
+    0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    Also see https://arxiv.org/abs/1606.08415
     """
     return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
@@ -643,11 +703,11 @@ def swish(x):
 
 
 def get_activation_fn(name: str) -> typing.Callable:
-    if name == 'gelu':
+    if name == "gelu":
         return gelu
-    elif name == 'relu':
+    elif name == "relu":
         return torch.nn.functional.relu
-    elif name == 'swish':
+    elif name == "swish":
         return swish
     else:
         raise ValueError(f"Unrecognized activation fn: {name}")
@@ -656,13 +716,14 @@ def get_activation_fn(name: str) -> typing.Callable:
 try:
     from apex.normalization.fused_layer_norm import FusedLayerNorm as LayerNorm  # type: ignore
 except (ImportError, AttributeError):
-    logger.info("Better speed can be achieved with apex installed from "
-                "https://www.github.com/nvidia/apex .")
+    logger.info(
+        "Better speed can be achieved with apex installed from "
+        "https://www.github.com/nvidia/apex ."
+    )
 
     class LayerNorm(nn.Module):  # type: ignore
         def __init__(self, hidden_size, eps=1e-12):
-            """Construct a layernorm module in the TF style (epsilon inside the square root).
-            """
+            """Construct a layernorm module in the TF style (epsilon inside the square root)."""
             super().__init__()
             self.weight = nn.Parameter(torch.ones(hidden_size))
             self.bias = nn.Parameter(torch.zeros(hidden_size))
@@ -676,37 +737,29 @@ except (ImportError, AttributeError):
 
 
 class SimpleMLP(nn.Module):
-
-    def __init__(self,
-                 in_dim: int,
-                 hid_dim: int,
-                 out_dim: int,
-                 dropout: float = 0.):
+    def __init__(self, in_dim: int, hid_dim: int, out_dim: int, dropout: float = 0.0):
         super().__init__()
         self.main = nn.Sequential(
             weight_norm(nn.Linear(in_dim, hid_dim), dim=None),
             nn.ReLU(),
             nn.Dropout(dropout, inplace=True),
-            weight_norm(nn.Linear(hid_dim, out_dim), dim=None))
+            weight_norm(nn.Linear(hid_dim, out_dim), dim=None),
+        )
 
     def forward(self, x):
         return self.main(x)
 
 
 class SimpleConv(nn.Module):
-
-    def __init__(self,
-                 in_dim: int,
-                 hid_dim: int,
-                 out_dim: int,
-                 dropout: float = 0.):
+    def __init__(self, in_dim: int, hid_dim: int, out_dim: int, dropout: float = 0.0):
         super().__init__()
         self.main = nn.Sequential(
             nn.BatchNorm1d(in_dim),  # Added this
             weight_norm(nn.Conv1d(in_dim, hid_dim, 5, padding=2), dim=None),
             nn.ReLU(),
             nn.Dropout(dropout, inplace=True),
-            weight_norm(nn.Conv1d(hid_dim, out_dim, 3, padding=1), dim=None))
+            weight_norm(nn.Conv1d(hid_dim, out_dim, 3, padding=1), dim=None),
+        )
 
     def forward(self, x):
         x = x.transpose(1, 2)
@@ -716,7 +769,6 @@ class SimpleConv(nn.Module):
 
 
 class Accuracy(nn.Module):
-
     def __init__(self, ignore_index: int = -100):
         super().__init__()
         self.ignore_index = ignore_index
@@ -726,11 +778,12 @@ class Accuracy(nn.Module):
 
 
 class PredictionHeadTransform(nn.Module):
-
-    def __init__(self,
-                 hidden_size: int,
-                 hidden_act: typing.Union[str, typing.Callable] = 'gelu',
-                 layer_norm_eps: float = 1e-12):
+    def __init__(
+        self,
+        hidden_size: int,
+        hidden_act: typing.Union[str, typing.Callable] = "gelu",
+        layer_norm_eps: float = 1e-12,
+    ):
         super().__init__()
         self.dense = nn.Linear(hidden_size, hidden_size)
         if isinstance(hidden_act, str):
@@ -747,15 +800,18 @@ class PredictionHeadTransform(nn.Module):
 
 
 class MLMHead(nn.Module):
-
-    def __init__(self,
-                 hidden_size: int,
-                 vocab_size: int,
-                 hidden_act: typing.Union[str, typing.Callable] = 'gelu',
-                 layer_norm_eps: float = 1e-12,
-                 ignore_index: int = -100):
+    def __init__(
+        self,
+        hidden_size: int,
+        vocab_size: int,
+        hidden_act: typing.Union[str, typing.Callable] = "gelu",
+        layer_norm_eps: float = 1e-12,
+        ignore_index: int = -100,
+    ):
         super().__init__()
-        self.transform = PredictionHeadTransform(hidden_size, hidden_act, layer_norm_eps)
+        self.transform = PredictionHeadTransform(
+            hidden_size, hidden_act, layer_norm_eps
+        )
 
         # The output weights are the same as the input embeddings, but there is
         # an output-only bias for each token.
@@ -771,15 +827,16 @@ class MLMHead(nn.Module):
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             masked_lm_loss = loss_fct(
-                hidden_states.view(-1, self.vocab_size), targets.view(-1))
-            metrics = {'perplexity': torch.exp(masked_lm_loss)}
+                hidden_states.view(-1, self.vocab_size), targets.view(-1)
+            )
+            metrics = {"perplexity": torch.exp(masked_lm_loss)}
             loss_and_metrics = (masked_lm_loss, metrics)
             outputs = (loss_and_metrics,) + outputs
         return outputs  # (loss), prediction_scores
 
 
 class ValuePredictionHead(nn.Module):
-    def __init__(self, hidden_size: int, dropout: float = 0.):
+    def __init__(self, hidden_size: int, dropout: float = 0.0):
         super().__init__()
         self.value_prediction = SimpleMLP(hidden_size, 512, 1, dropout)
 
@@ -806,7 +863,7 @@ class SequenceClassificationHead(nn.Module):
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss()
             classification_loss = loss_fct(logits, targets)
-            metrics = {'accuracy': accuracy(logits, targets)}
+            metrics = {"accuracy": accuracy(logits, targets)}
             loss_and_metrics = (classification_loss, metrics)
             outputs = (loss_and_metrics,) + outputs
 
@@ -814,14 +871,9 @@ class SequenceClassificationHead(nn.Module):
 
 
 class SequenceToSequenceClassificationHead(nn.Module):
-
-    def __init__(self,
-                 hidden_size: int,
-                 num_labels: int,
-                 ignore_index: int = -100):
+    def __init__(self, hidden_size: int, num_labels: int, ignore_index: int = -100):
         super().__init__()
-        self.classify = SimpleConv(
-            hidden_size, 512, num_labels)
+        self.classify = SimpleConv(hidden_size, 512, num_labels)
         self.num_labels = num_labels
         self._ignore_index = ignore_index
 
@@ -831,21 +883,23 @@ class SequenceToSequenceClassificationHead(nn.Module):
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
             classification_loss = loss_fct(
-                sequence_logits.view(-1, self.num_labels), targets.view(-1))
+                sequence_logits.view(-1, self.num_labels), targets.view(-1)
+            )
             acc_fct = Accuracy(ignore_index=self._ignore_index)
-            metrics = {'accuracy':
-                       acc_fct(sequence_logits.view(-1, self.num_labels), targets.view(-1))}
+            metrics = {
+                "accuracy": acc_fct(
+                    sequence_logits.view(-1, self.num_labels), targets.view(-1)
+                )
+            }
             loss_and_metrics = (classification_loss, metrics)
             outputs = (loss_and_metrics,) + outputs
         return outputs  # (loss), sequence_logits
 
 
 class PairwiseContactPredictionHead(nn.Module):
-
     def __init__(self, hidden_size: int, ignore_index=-100):
         super().__init__()
-        self.predict = nn.Sequential(
-            nn.Dropout(), nn.Linear(2 * hidden_size, 2))
+        self.predict = nn.Sequential(nn.Dropout(), nn.Linear(2 * hidden_size, 2))
         self._ignore_index = ignore_index
 
     def forward(self, inputs, sequence_lengths, targets=None):
@@ -859,10 +913,12 @@ class PairwiseContactPredictionHead(nn.Module):
 
         if targets is not None:
             loss_fct = nn.CrossEntropyLoss(ignore_index=self._ignore_index)
-            contact_loss = loss_fct(
-                prediction.view(-1, 2), targets.view(-1))
-            metrics = {'precision_at_l5':
-                       self.compute_precision_at_l5(sequence_lengths, prediction, targets)}
+            contact_loss = loss_fct(prediction.view(-1, 2), targets.view(-1))
+            metrics = {
+                "precision_at_l5": self.compute_precision_at_l5(
+                    sequence_lengths, prediction, targets
+                )
+            }
             loss_and_metrics = (contact_loss, metrics)
             outputs = (loss_and_metrics,) + outputs
 
@@ -878,7 +934,9 @@ class PairwiseContactPredictionHead(nn.Module):
             valid_mask = valid_mask.type_as(probs)
             correct = 0
             total = 0
-            for length, prob, label, mask in zip(sequence_lengths, probs, labels, valid_mask):
+            for length, prob, label, mask in zip(
+                sequence_lengths, probs, labels, valid_mask
+            ):
                 masked_prob = (prob * mask).view(-1)
                 most_likely = masked_prob.topk(length // 5, sorted=False)
                 selected = label.view(-1).gather(0, most_likely.indices)

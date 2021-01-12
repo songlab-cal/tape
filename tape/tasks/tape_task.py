@@ -1,14 +1,12 @@
 from abc import ABC, abstractproperty, abstractmethod, abstractclassmethod
-from typing import Callable, Optional, Union, Dict, List, Type
+from typing import Union, Dict, List, Type
 import logging
 from pathlib import Path
 import tempfile
 import tarfile
 from argparse import ArgumentParser, Namespace
-from functools import partial
 
 import torch
-import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
 
@@ -16,6 +14,7 @@ from .. import lr_schedulers
 from ..tokenizers import TAPETokenizer, FairseqTokenizer
 from ..datasets import LMDBDataset
 from ..utils import http_get, PathLike, TensorDict
+from ..models.modeling_utils import ProteinModel
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +48,7 @@ class TAPEDataset(Dataset, ABC):
         self.data_path = data_path
         self.use_msa = use_msa
         self.max_tokens_per_msa = max_tokens_per_msa
+        self.pad_idx = tokenizer.convert_token_to_id("<pad>")
 
     def __len__(self) -> int:
         return len(self.data)
@@ -181,20 +181,16 @@ class TAPEDataModule(pl.LightningDataModule):
         return self.make_dataloader("train", shuffle=True)
 
     def val_dataloader(self):
-        return self.make_dataloader("valid", shuffle=True)
+        return self.make_dataloader("valid", shuffle=False)
 
     def test_dataloader(self):
-        return self.make_dataloader("test", shuffle=True)
+        return self.make_dataloader("test", shuffle=False)
 
 
 class TAPEPredictorBase(pl.LightningModule):
     def __init__(
         self,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
         freeze_base: bool = False,
         optimizer: str = "adam",
         learning_rate: float = 1e-3,
@@ -225,7 +221,7 @@ class TAPEPredictorBase(pl.LightningModule):
             base_model.requires_grad_(False)
 
         self.base_model = base_model
-        self.extract_features = partial(extract_features, self.base_model)
+        self.embedding_dim = base_model.embedding_dim
 
     @staticmethod
     def add_args(parser: ArgumentParser) -> ArgumentParser:
@@ -277,17 +273,13 @@ class TAPEPredictorBase(pl.LightningModule):
     def from_argparse_args(
         cls,
         args: Namespace,
-        base_model: nn.Module,
-        extract_features: Callable[
-            [nn.Module, torch.Tensor, Optional[torch.Tensor]], torch.Tensor
-        ],
-        embedding_dim: int,
+        base_model: ProteinModel,
     ):
         raise NotImplementedError
 
     def forward(self, src_tokens, src_lengths):
         # B x L x D
-        features = self.extract_features(src_tokens, src_lengths)
+        features = self.base_model.extract_features(src_tokens, src_lengths)
         return features
 
     def configure_optimizers(self):
@@ -356,13 +348,9 @@ class TAPETask:
     def build_model(
         self,
         args: Namespace,
-        base_model: nn.Module,
-        extract_features,
-        embedding_dim: int,
+        base_model: ProteinModel,
     ) -> TAPEPredictorBase:
         return self.task_model_type.from_argparse_args(  # type: ignore
             args=args,
             base_model=base_model,
-            extract_features=extract_features,
-            embedding_dim=embedding_dim,
         )

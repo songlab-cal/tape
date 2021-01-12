@@ -2,7 +2,6 @@ from argparse import ArgumentParser, Namespace
 import torch
 import sys
 import logging
-from tape import utils
 from tape import tasks
 
 root_logger = logging.getLogger()
@@ -14,10 +13,6 @@ console_handler = logging.StreamHandler(sys.stdout)
 console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
 root_logger.addHandler(console_handler)
-
-
-def extract_features(model, src_tokens, src_lengths):
-    return model(src_tokens, utils.seqlen_mask(src_tokens, src_lengths))[0][:, 1:-1]
 
 
 def get_num_gpus(args: Namespace) -> int:
@@ -64,9 +59,7 @@ def train():
     maybe_unset_distributed(args)
     task_data = task.build_data(args)
     base_model = ProteinBertModel.from_pretrained("bert-base")
-    task_model = task.build_model(
-        args, base_model, extract_features, 768,
-    )
+    task_model = task.build_model(args, base_model)
 
     kwargs = {}
     if args.wandb_project:
