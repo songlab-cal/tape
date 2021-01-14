@@ -43,6 +43,12 @@ def train(base_model: ProteinModel):
         default=None,
         help="Optional wandb project to log to.",
     )
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=3,
+        help="Early stopping patience.",
+    )
     parser = pl.Trainer.add_argparse_args(parser)
     parser.set_defaults(
         gpus=1,
@@ -75,7 +81,7 @@ def train(base_model: ProteinModel):
     )
     early_stopping_callback = pl.callbacks.EarlyStopping(
         monitor="loss/valid",
-        patience=3,
+        patience=args.patience,
     )
     # Initialize Trainer
     trainer = pl.Trainer.from_argparse_args(

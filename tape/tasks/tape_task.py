@@ -49,6 +49,7 @@ class TAPEDataset(Dataset, ABC):
         self.use_msa = use_msa
         self.max_tokens_per_msa = max_tokens_per_msa
         self.pad_idx = tokenizer.convert_token_to_id("<pad>")
+        self.split = split
 
     def __len__(self) -> int:
         return len(self.data)

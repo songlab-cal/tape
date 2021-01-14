@@ -7,7 +7,6 @@ import scipy.stats
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from Bio.Align import PairwiseAligner, substitution_matrices
 from tqdm import trange
 
 from ..models.modeling_utils import ProteinModel
@@ -27,7 +26,7 @@ from .tape_task import (
 )
 
 
-class FluorescenceDataset(TAPEDataset):
+class StabilityDataset(TAPEDataset):
     def __init__(
         self,
         data_path: Union[str, Path],
@@ -45,54 +44,44 @@ class FluorescenceDataset(TAPEDataset):
             max_tokens_per_msa=max_tokens_per_msa,
         )
         self.return_cached_embeddings = return_cached_embeddings
-        if self.use_msa:
-            msa_file = "fluorescence/wtGFP.a3m"
-            msa_path = self.data_path / msa_file
-            _, msa = parse_fasta(msa_path, remove_insertions=True)
-            reference = msa[0]
-            seqlen = len(self.tokenizer.encode(self.data[0]["primary"]))
-            max_num_sequences = max_tokens_per_msa // seqlen
-            sequences_from_msa = max_num_sequences - 1
-
-            sequences = hhfilter_sequences(msa, diff=sequences_from_msa)
-            tokens = torch.stack(
-                [
-                    torch.from_numpy(self.tokenizer.encode(seq))
-                    for _, seq in sequences[:sequences_from_msa]
-                ],
-                0,
-            ).long()
-            self.reference = reference
-            self.msa = tokens
-            self.aligner = PairwiseAligner(
-                substitution_matrix=substitution_matrices.load("BLOSUM62"),
-                mode="global",
-                target_open_gap_score=-float("inf"),
-            )
-
-    def maybe_align_sequence(self, sequence: str) -> str:
-        if not self.use_msa or len(sequence) == len(self.reference):
-            return sequence
-        else:
-            return str(self.aligner.align(self.reference, sequence)[0]).split("\n")[2]
 
     @property
     def task_name(self) -> str:
-        return "fluorescence"
+        return "stability"
 
     @property
     def splits(self) -> List[str]:
         return ["train", "valid", "test"]
 
+    def load_msa(self, id_: str) -> torch.Tensor:
+        msa_path = self.data_path / self.task_name / "a3m"
+        msa_name, suffix = id_.rsplit(".", maxsplit=1)
+        suffix = suffix.split("_")[0]
+        msa_name = f"{msa_name}.{suffix}.a3m"
+        a3m_file = msa_path / msa_name
+        _, msa = parse_fasta(a3m_file, remove_insertions=True)
+        seqlen = len(self.tokenizer.encode(self.data[0]["primary"]))
+        max_num_sequences = self.max_tokens_per_msa // seqlen
+
+        sequences = hhfilter_sequences(msa, diff=max_num_sequences)
+        tokens = torch.stack(
+            [
+                torch.from_numpy(self.tokenizer.encode(seq))
+                for _, seq in sequences[:max_num_sequences]
+            ],
+            0,
+        ).long()
+        return tokens
+
     def __getitem__(self, index: int):
         item = self.data[index]
-        sequence = self.maybe_align_sequence(item["primary"])
+        sequence = item["primary"]
         src_tokens = torch.from_numpy(self.tokenizer.encode(sequence)).long()
         if self.use_msa:
-            src_tokens = src_tokens.unsqueeze(0)
-            src_tokens = torch.cat([src_tokens, self.msa], 0)
-        value = torch.tensor(item["log_fluorescence"][0], dtype=torch.float)
-        result = {"src_tokens": src_tokens, "log_fluorescence": value}
+            msa = self.load_msa(item["id"].decode())
+            msa[0] = src_tokens
+        value = torch.tensor(item["stability_score"][0], dtype=torch.float)
+        result = {"src_tokens": src_tokens, "stability_score": value}
         if self.return_cached_embeddings:
             embed = self.load_cached_embedding(index)
             result["features"] = embed
@@ -111,8 +100,8 @@ class FluorescenceDataset(TAPEDataset):
                 "src_tokens": src_tokens,
                 "src_lengths": src_lengths,
             },
-            "log_fluorescence": torch.stack(
-                [item["log_fluorescence"] for item in batch], 0
+            "stability_score": torch.stack(
+                [item["stability_score"] for item in batch], 0
             ).unsqueeze(1),
         }
         if self.return_cached_embeddings:
@@ -151,21 +140,21 @@ class FluorescenceDataset(TAPEDataset):
             self.make_embedding(base_model, index)
 
 
-class FluorescenceDataModule(TAPEDataModule):
+class StabilityDataModule(TAPEDataModule):
     @property
     def data_url(self) -> str:
-        return "http://s3.amazonaws.com/proteindata/data_pytorch/fluorescence.tar.gz"  # noqa: E501
+        return "http://s3.amazonaws.com/proteindata/data_pytorch/stability.tar.gz"  # noqa: E501
 
     @property
     def task_name(self) -> str:
-        return "fluorescence"
+        return "stability"
 
     @property
-    def dataset_type(self) -> Type[FluorescenceDataset]:
-        return FluorescenceDataset
+    def dataset_type(self) -> Type[StabilityDataset]:
+        return StabilityDataset
 
 
-class FluorescencePredictor(TAPEPredictorBase):
+class StabilityPredictor(TAPEPredictorBase):
     def __init__(
         self,
         base_model: ProteinModel,
@@ -243,17 +232,17 @@ class FluorescencePredictor(TAPEPredictorBase):
         return self.mlp(pooled_features)
 
     def compute_loss(self, batch, mode: str):
-        log_fluorescence = self(**batch["net_input"])
-        loss = nn.MSELoss()(log_fluorescence, batch["log_fluorescence"])
+        stability_score = self(**batch["net_input"])
+        loss = nn.MSELoss()(stability_score, batch["stability_score"])
         self.log(f"loss/{mode}", loss)
 
-        return {"loss": loss, "log_fluorescence": log_fluorescence, "target": batch}
+        return {"loss": loss, "stability_score": stability_score, "target": batch}
 
     def compute_and_log_accuracy(self, outputs, mode: str):
         mse = getattr(self, f"mean_{mode}_squared_error")
         mae = getattr(self, f"mean_{mode}_absolute_error")
-        mse(outputs["log_fluorescence"], outputs["target"]["log_fluorescence"])
-        mae(outputs["log_fluorescence"], outputs["target"]["log_fluorescence"])
+        mse(outputs["stability_score"], outputs["target"]["stability_score"])
+        mae(outputs["stability_score"], outputs["target"]["stability_score"])
         self.log(f"mse/{mode}", mse)
         self.log(f"mae/{mode}", mae)
 
@@ -272,8 +261,8 @@ class FluorescencePredictor(TAPEPredictorBase):
         return outputs
 
     def validation_epoch_end(self, outputs):
-        predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.cat([step["target"]["log_fluorescence"] for step in outputs], 0)
+        predictions = torch.cat([step["stability_score"] for step in outputs], 0)
+        targets = torch.cat([step["target"]["stability_score"] for step in outputs], 0)
         corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/valid", corr)
 
@@ -285,8 +274,8 @@ class FluorescencePredictor(TAPEPredictorBase):
         return outputs
 
     def test_epoch_end(self, outputs):
-        predictions = torch.cat([step["log_fluorescence"] for step in outputs], 0)
-        targets = torch.cat([step["target"]["log_fluorescence"] for step in outputs], 0)
+        predictions = torch.cat([step["stability_score"] for step in outputs], 0)
+        targets = torch.cat([step["target"]["stability_score"] for step in outputs], 0)
         corr, _ = scipy.stats.spearmanr(predictions.cpu(), targets.cpu())
         self.log("spearmanr/test", corr)
 
@@ -310,6 +299,6 @@ class FluorescencePredictor(TAPEPredictorBase):
         )
 
 
-FluorescenceTask = TAPETask(
-    "fluorescence", FluorescenceDataModule, FluorescencePredictor  # type: ignore
+StabilityTask = TAPETask(
+    "stability", StabilityDataModule, StabilityPredictor  # type: ignore
 )
