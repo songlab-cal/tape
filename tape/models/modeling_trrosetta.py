@@ -1,3 +1,4 @@
+from typing import List, Dict
 import torch
 import torch.nn as nn
 
@@ -6,18 +7,18 @@ from .modeling_utils import ProteinModel
 
 URL_PREFIX = "https://s3.amazonaws.com/proteindata/pytorch-models/"
 TRROSETTA_PRETRAINED_MODEL_ARCHIVE_MAP = {
-    'xaa': URL_PREFIX + "trRosetta-xaa-pytorch_model.bin",
-    'xab': URL_PREFIX + "trRosetta-xab-pytorch_model.bin",
-    'xac': URL_PREFIX + "trRosetta-xac-pytorch_model.bin",
-    'xad': URL_PREFIX + "trRosetta-xad-pytorch_model.bin",
-    'xae': URL_PREFIX + "trRosetta-xae-pytorch_model.bin",
+    "xaa": URL_PREFIX + "trRosetta-xaa-pytorch_model.bin",
+    "xab": URL_PREFIX + "trRosetta-xab-pytorch_model.bin",
+    "xac": URL_PREFIX + "trRosetta-xac-pytorch_model.bin",
+    "xad": URL_PREFIX + "trRosetta-xad-pytorch_model.bin",
+    "xae": URL_PREFIX + "trRosetta-xae-pytorch_model.bin",
 }
 TRROSETTA_PRETRAINED_CONFIG_ARCHIVE_MAP = {
-    'xaa': URL_PREFIX + "trRosetta-xaa-config.json",
-    'xab': URL_PREFIX + "trRosetta-xab-config.json",
-    'xac': URL_PREFIX + "trRosetta-xac-config.json",
-    'xad': URL_PREFIX + "trRosetta-xad-config.json",
-    'xae': URL_PREFIX + "trRosetta-xae-config.json",
+    "xaa": URL_PREFIX + "trRosetta-xaa-config.json",
+    "xab": URL_PREFIX + "trRosetta-xab-config.json",
+    "xac": URL_PREFIX + "trRosetta-xac-config.json",
+    "xad": URL_PREFIX + "trRosetta-xad-config.json",
+    "xae": URL_PREFIX + "trRosetta-xae-config.json",
 }
 
 
@@ -25,15 +26,17 @@ class TRRosettaConfig(ProteinConfig):
 
     pretrained_config_archive_map = TRROSETTA_PRETRAINED_CONFIG_ARCHIVE_MAP
 
-    def __init__(self,
-                 num_features: int = 64,
-                 kernel_size: int = 3,
-                 num_layers: int = 61,
-                 dropout: float = 0.15,
-                 msa_cutoff: float = 0.8,
-                 penalty_coeff: float = 4.5,
-                 initializer_range: float = 0.02,
-                 **kwargs):
+    def __init__(
+        self,
+        num_features: int = 64,
+        kernel_size: int = 3,
+        num_layers: int = 61,
+        dropout: float = 0.15,
+        msa_cutoff: float = 0.8,
+        penalty_coeff: float = 4.5,
+        initializer_range: float = 0.02,
+        **kwargs,
+    ):
         super().__init__(**kwargs)
         self.num_features = num_features
         self.kernel_size = kernel_size
@@ -45,7 +48,6 @@ class TRRosettaConfig(ProteinConfig):
 
 
 class MSAFeatureExtractor(nn.Module):
-
     def __init__(self, config: TRRosettaConfig):
         super().__init__()
         self.msa_cutoff = config.msa_cutoff
@@ -58,6 +60,9 @@ class MSAFeatureExtractor(nn.Module):
 
         msa1hot = msa1hot.float()
         seqlen = msa1hot.size(2)
+        if msa1hot.size(1) > 30000:
+            device = msa1hot.device
+            msa1hot = msa1hot.cpu()
 
         weights = self.reweight(msa1hot)
         features_1d = self.extract_features_1d(msa1hot, weights)
@@ -69,13 +74,17 @@ class MSAFeatureExtractor(nn.Module):
         features = features.type(initial_type)
         features = features.permute(0, 3, 1, 2)
         features = features.contiguous()
+        if msa1hot.size(1) > 30000:
+            features = features.to(device)
         return features
 
     def reweight(self, msa1hot, eps=1e-9):
         # Reweight
         seqlen = msa1hot.size(2)
         id_min = seqlen * self.msa_cutoff
-        id_mtx = torch.stack([torch.tensordot(el, el, [[1, 2], [1, 2]]) for el in msa1hot], 0)
+        assert msa1hot.size(0) == 1
+        # id_mtx = torch.stack([torch.tensordot(el, el, [[1, 2], [1, 2]]) for el in msa1hot], 0)
+        id_mtx = torch.tensordot(msa1hot[0], msa1hot[0], [[1, 2], [1, 2]]).unsqueeze(0)
         id_mask = id_mtx > id_min
         weights = 1.0 / (id_mask.type_as(msa1hot).sum(-1) + eps)
         return weights
@@ -105,24 +114,32 @@ class MSAFeatureExtractor(nn.Module):
         if num_alignments == 1:
             # No alignments, predict from sequence alone
             f2d_dca = torch.zeros(
-                batch_size, seqlen, seqlen, 442,
+                batch_size,
+                seqlen,
+                seqlen,
+                442,
                 dtype=torch.float,
-                device=msa1hot.device)
+                device=msa1hot.device,
+            )
             return f2d_dca
 
         # compute fast_dca
         # covariance
         x = msa1hot.view(batch_size, num_alignments, seqlen * num_symbols)
         num_points = weights.sum(1) - weights.mean(1).sqrt()
-        mean = (x * weights.unsqueeze(2)).sum(1, keepdims=True) / num_points[:, None, None]
+        mean = (x * weights.unsqueeze(2)).sum(1, keepdims=True) / num_points[
+            :, None, None
+        ]
         x = (x - mean) * weights[:, :, None].sqrt()
         cov = torch.matmul(x.transpose(-1, -2), x) / num_points[:, None, None]
 
         # inverse covariance
-        reg = torch.eye(seqlen * num_symbols,
-                        device=weights.device,
-                        dtype=weights.dtype)[None]
-        reg = reg * self.penalty_coeff / weights.sum(1, keepdims=True).sqrt().unsqueeze(2)
+        reg = torch.eye(
+            seqlen * num_symbols, device=weights.device, dtype=weights.dtype
+        )[None]
+        reg = (
+            reg * self.penalty_coeff / weights.sum(1, keepdims=True).sqrt().unsqueeze(2)
+        )
         cov_reg = cov + reg
         inv_cov = torch.stack([torch.inverse(cr) for cr in cov_reg.unbind(0)], 0)
 
@@ -131,11 +148,16 @@ class MSAFeatureExtractor(nn.Module):
         features = x2.reshape(batch_size, seqlen, seqlen, num_symbols * num_symbols)
 
         x3 = (x1[:, :, :-1, :, :-1] ** 2).sum((2, 4)).sqrt() * (
-            1 - torch.eye(seqlen, device=weights.device, dtype=weights.dtype)[None])
-        apc = x3.sum(1, keepdims=True) * x3.sum(2, keepdims=True) / x3.sum(
-            (1, 2), keepdims=True)
-        contacts = (x3 - apc) * (1 - torch.eye(
-            seqlen, device=x3.device, dtype=x3.dtype).unsqueeze(0))
+            1 - torch.eye(seqlen, device=weights.device, dtype=weights.dtype)[None]
+        )
+        apc = (
+            x3.sum(1, keepdims=True)
+            * x3.sum(2, keepdims=True)
+            / x3.sum((1, 2), keepdims=True)
+        )
+        contacts = (x3 - apc) * (
+            1 - torch.eye(seqlen, device=x3.device, dtype=x3.dtype).unsqueeze(0)
+        )
 
         f2d_dca = torch.cat([features, contacts[:, :, :, None]], axis=3)
         return f2d_dca
@@ -146,17 +168,20 @@ class MSAFeatureExtractor(nn.Module):
 
 
 class DilatedResidualBlock(nn.Module):
-
-    def __init__(self, num_features: int, kernel_size: int, dilation: int, dropout: float):
+    def __init__(
+        self, num_features: int, kernel_size: int, dilation: int, dropout: float
+    ):
         super().__init__()
         padding = self._get_padding(kernel_size, dilation)
         self.conv1 = nn.Conv2d(
-            num_features, num_features, kernel_size, padding=padding, dilation=dilation)
+            num_features, num_features, kernel_size, padding=padding, dilation=dilation
+        )
         self.norm1 = nn.InstanceNorm2d(num_features, affine=True, eps=1e-6)
         self.actv1 = nn.ELU(inplace=True)
         self.dropout = nn.Dropout(dropout)
         self.conv2 = nn.Conv2d(
-            num_features, num_features, kernel_size, padding=padding, dilation=dilation)
+            num_features, num_features, kernel_size, padding=padding, dilation=dilation
+        )
         self.norm2 = nn.InstanceNorm2d(num_features, affine=True, eps=1e-6)
         self.actv2 = nn.ELU(inplace=True)
         self.apply(self._init_weights)
@@ -168,12 +193,12 @@ class DilatedResidualBlock(nn.Module):
     def _init_weights(self, module):
         """ Initialize the weights """
         if isinstance(module, nn.Conv2d):
-            nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
             if module.bias is not None:
                 module.bias.data.zero_()
 
         # elif isinstance(module, DilatedResidualBlock):
-            # nn.init.constant_(module.norm2.weight, 0)
+        # nn.init.constant_(module.norm2.weight, 0)
 
     def forward(self, features):
         shortcut = features
@@ -190,7 +215,7 @@ class DilatedResidualBlock(nn.Module):
 class TRRosettaAbstractModel(ProteinModel):
 
     config_class = TRRosettaConfig
-    base_model_prefix = 'trrosetta'
+    base_model_prefix = "trrosetta"
     pretrained_model_archive_map = TRROSETTA_PRETRAINED_MODEL_ARCHIVE_MAP
 
     def __init__(self, config: TRRosettaConfig):
@@ -203,7 +228,7 @@ class TRRosettaAbstractModel(ProteinModel):
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, nn.Conv2d):
-            nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+            nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
             if module.bias is not None:
                 module.bias.data.zero_()
         elif isinstance(module, DilatedResidualBlock):
@@ -211,19 +236,20 @@ class TRRosettaAbstractModel(ProteinModel):
 
 
 class TRRosettaPredictor(TRRosettaAbstractModel):
-
     def __init__(self, config: TRRosettaConfig):
         super().__init__(config)
         layers = [
             nn.Conv2d(526, config.num_features, 1),
             nn.InstanceNorm2d(config.num_features, affine=True, eps=1e-6),
             nn.ELU(),
-            nn.Dropout(config.dropout)]
+            nn.Dropout(config.dropout),
+        ]
 
         dilation = 1
         for _ in range(config.num_layers):
             block = DilatedResidualBlock(
-                config.num_features, config.kernel_size, dilation, config.dropout)
+                config.num_features, config.kernel_size, dilation, config.dropout
+            )
             layers.append(block)
 
             dilation *= 2
@@ -247,12 +273,7 @@ class TRRosettaPredictor(TRRosettaAbstractModel):
         nn.init.constant_(self.predict_bb.weight, 0)
         nn.init.constant_(self.predict_omega.weight, 0)
 
-    def forward(self,
-                features,
-                theta=None,
-                phi=None,
-                dist=None,
-                omega=None):
+    def forward(self, features, theta=None, phi=None, dist=None, omega=None):
         batch_size = features.size(0)
         seqlen = features.size(2)
         embedding = self.resnet(features)
@@ -281,10 +302,10 @@ class TRRosettaPredictor(TRRosettaAbstractModel):
         logits_phi = logits_phi.permute(0, 2, 3, 1).contiguous()
 
         probs = {}
-        probs['p_dist'] = nn.Softmax(-1)(logits_dist)
-        probs['p_theta'] = nn.Softmax(-1)(logits_theta)
-        probs['p_omega'] = nn.Softmax(-1)(logits_omega)
-        probs['p_phi'] = nn.Softmax(-1)(logits_phi)
+        probs["p_dist"] = nn.Softmax(-1)(logits_dist)
+        probs["p_theta"] = nn.Softmax(-1)(logits_theta)
+        probs["p_omega"] = nn.Softmax(-1)(logits_omega)
+        probs["p_phi"] = nn.Softmax(-1)(logits_phi)
         outputs = (probs,)
 
         metrics = {}
@@ -293,22 +314,26 @@ class TRRosettaPredictor(TRRosettaAbstractModel):
         if dist is not None:
             logits_dist = logits_dist.reshape(batch_size * seqlen * seqlen, 37)
             loss_dist = nn.CrossEntropyLoss(ignore_index=-1)(logits_dist, dist.view(-1))
-            metrics['dist'] = loss_dist
+            metrics["dist"] = loss_dist
             total_loss += loss_dist
         if theta is not None:
             logits_theta = logits_theta.reshape(batch_size * seqlen * seqlen, 25)
-            loss_theta = nn.CrossEntropyLoss(ignore_index=0)(logits_theta, theta.view(-1))
-            metrics['theta'] = loss_theta
+            loss_theta = nn.CrossEntropyLoss(ignore_index=0)(
+                logits_theta, theta.view(-1)
+            )
+            metrics["theta"] = loss_theta
             total_loss += loss_theta
         if omega is not None:
             logits_omega = logits_omega.reshape(batch_size * seqlen * seqlen, 25)
-            loss_omega = nn.CrossEntropyLoss(ignore_index=0)(logits_omega, omega.view(-1))
-            metrics['omega'] = loss_omega
+            loss_omega = nn.CrossEntropyLoss(ignore_index=0)(
+                logits_omega, omega.view(-1)
+            )
+            metrics["omega"] = loss_omega
             total_loss += loss_omega
         if phi is not None:
             logits_phi = logits_phi.reshape(batch_size * seqlen * seqlen, 13)
             loss_phi = nn.CrossEntropyLoss(ignore_index=0)(logits_phi, phi.view(-1))
-            metrics['phi'] = loss_phi
+            metrics["phi"] = loss_phi
             total_loss += loss_phi
 
         if len(metrics) > 0:
@@ -318,17 +343,89 @@ class TRRosettaPredictor(TRRosettaAbstractModel):
 
 
 class TRRosetta(TRRosettaAbstractModel):
-
     def __init__(self, config: TRRosettaConfig):
         super().__init__(config)
-        self.extract_features = MSAFeatureExtractor(config)
+        self.msa_features = MSAFeatureExtractor(config)
         self.trrosetta = TRRosettaPredictor(config)
 
-    def forward(self,
-                msa1hot,
-                theta=None,
-                phi=None,
-                dist=None,
-                omega=None):
-        features = self.extract_features(msa1hot)
+    def forward(self, msa1hot, theta=None, phi=None, dist=None, omega=None):
+        features = self.msa_features(msa1hot)
         return self.trrosetta(features, theta, phi, dist, omega)
+
+    @classmethod
+    def from_tensorflow_checkpoint(cls, path: str):
+        import re
+        import tensorflow as tf
+
+        variables: Dict[str, List[int]] = dict(tf.train.list_variables(path))
+        kernel_size, _, num_features, _ = variables["conv2d_1/kernel"]
+        kernel_shape = [kernel_size, kernel_size, num_features, num_features]
+        pattern = re.compile("conv2d_[0-9]+/kernel")
+        num_kernels = sum(
+            1
+            for name, shape in variables.items()
+            if pattern.fullmatch(name) is not None and shape == kernel_shape
+        )
+
+        num_layers = num_kernels // 2
+        config = TRRosettaConfig(
+            num_features=num_features,
+            kernel_size=kernel_size,
+            num_layers=num_layers,
+        )
+
+        model = cls(config)
+
+        output_ordering = ["theta", "phi", "dist", "bb", "omega"]
+
+        def convert_name(tf_name: str) -> str:
+            if re.fullmatch("conv2d_[0-9]+/(kernel|bias)", tf_name) is not None:
+                ending = tf_name.rsplit("/", maxsplit=1)[-1]
+                torch_ending = "weight" if ending == "kernel" else "bias"
+                conv_num = int(
+                    re.search("_[0-9]+/", tf_name).group()[1:-1]  # type: ignore
+                )
+                block_num = (conv_num + 1) % 2 + 1
+                layer_num = ((conv_num + 1) // 2) + 3
+                if layer_num > num_layers + 3:
+                    index = conv_num - (2 * num_layers + 1)
+                    output_name = output_ordering[index]
+                    return f"trrosetta.predict_{output_name}.{torch_ending}"
+                else:
+                    name = (
+                        f"trrosetta.resnet.{layer_num}.conv{block_num}.{torch_ending}"
+                    )
+            elif re.fullmatch("InstanceNorm_[0-9]+/(gamma|beta)", tf_name) is not None:
+                ending = tf_name.rsplit("/", maxsplit=1)[-1]
+                torch_ending = "weight" if ending == "gamma" else "bias"
+                conv_num = int(
+                    re.search("_[0-9]+/", tf_name).group()[1:-1]  # type: ignore
+                )
+                block_num = (conv_num + 1) % 2 + 1
+                layer_num = ((conv_num + 1) // 2) + 3
+                name = f"trrosetta.resnet.{layer_num}.norm{block_num}.{torch_ending}"
+            elif tf_name == "conv2d/kernel":
+                name = "trrosetta.resnet.0.weight"
+            elif tf_name == "conv2d/bias":
+                name = "trrosetta.resnet.0.bias"
+            elif tf_name == "InstanceNorm/gamma":
+                name = "trrosetta.resnet.1.weight"
+            elif tf_name == "InstanceNorm/beta":
+                name = "trrosetta.resnet.1.bias"
+            else:
+                raise ValueError(tf_name)
+
+            return name
+
+        state_dict = {}
+        for name, shape in variables.items():
+            if "Adam" in name or name in ("beta1_power", "beta2_power"):
+                continue
+            torch_name = convert_name(name)
+            data = torch.from_numpy(tf.train.load_variable(path, name))
+            if len(shape) == 4:
+                data = data.permute((3, 2, 0, 1))
+            state_dict[torch_name] = data
+        model.load_state_dict(state_dict)
+
+        return model

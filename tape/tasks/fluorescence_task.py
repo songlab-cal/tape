@@ -35,7 +35,7 @@ class FluorescenceDataset(TAPEDataset):
         tokenizer: Union[str, TAPETokenizer] = "iupac",
         use_msa: bool = False,
         max_tokens_per_msa: int = 2 ** 14,
-        return_cached_embeddings: bool = False,
+        return_cached_embeddings: bool = True,
     ):
         super().__init__(
             data_path=data_path,
@@ -103,7 +103,7 @@ class FluorescenceDataset(TAPEDataset):
     ) -> Dict[str, Union[torch.Tensor, TensorDict]]:
         src_tokens = pad_sequences([el["src_tokens"] for el in batch], self.pad_idx)
         src_lengths = torch.tensor(
-            [len(el["src_tokens"]) for el in batch], dtype=torch.long
+            [el["src_tokens"].size(-1) for el in batch], dtype=torch.long
         )
 
         result = {
@@ -131,6 +131,7 @@ class FluorescenceDataset(TAPEDataset):
     def load_cached_embedding(self, index: int) -> torch.Tensor:
         path = self.cached_embedding_path(index)
         embed = torch.load(path)
+        embed.requires_grad_(False)
         return embed
 
     def make_embedding(self, base_model: ProteinModel, index: int):

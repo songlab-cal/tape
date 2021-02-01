@@ -80,6 +80,7 @@ class StabilityDataset(TAPEDataset):
         if self.use_msa:
             msa = self.load_msa(item["id"].decode())
             msa[0] = src_tokens
+            src_tokens = msa
         value = torch.tensor(item["stability_score"][0], dtype=torch.float)
         result = {"src_tokens": src_tokens, "stability_score": value}
         if self.return_cached_embeddings:
@@ -92,7 +93,7 @@ class StabilityDataset(TAPEDataset):
     ) -> Dict[str, Union[torch.Tensor, TensorDict]]:
         src_tokens = pad_sequences([el["src_tokens"] for el in batch], self.pad_idx)
         src_lengths = torch.tensor(
-            [len(el["src_tokens"]) for el in batch], dtype=torch.long
+            [el["src_tokens"].size(-1) for el in batch], dtype=torch.long
         )
 
         result = {
@@ -136,8 +137,16 @@ class StabilityDataset(TAPEDataset):
             torch.save(embed, str(path))
 
     def make_all_embeddings(self, base_model: ProteinModel):
+        failed = []
         for index in trange(len(self)):
-            self.make_embedding(base_model, index)
+            try:
+                self.make_embedding(base_model, index)
+            except Exception:
+                print(f"Failed {index}")
+                failed.append(index)
+        embedding_dir = self.data_path / self.task_name / "embeddings"
+        (embedding_dir / f"{self.split}_failed.txt").write_text("\n".join(map(str, failed)))
+
 
 
 class StabilityDataModule(TAPEDataModule):
