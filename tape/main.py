@@ -117,7 +117,7 @@ def create_eval_parser(base_parser: argparse.ArgumentParser) -> argparse.Argumen
 
 def create_embed_parser(base_parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description='Embed a set of proteins wiht a pretrained model',
+        description='Embed a set of proteins with a pretrained model',
         parents=[base_parser])
     parser.add_argument('data_file', type=str,
                         help='File containing set of proteins to embed')
