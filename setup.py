@@ -15,10 +15,10 @@ def get_version():
             raise RuntimeError("Unable to find version string.")
 
 
-with open('README.md', 'r') as rf:
+with open('README.md', 'r', encoding="utf-8") as rf:
     README = rf.read()
 
-with open('LICENSE', 'r') as lf:
+with open('LICENSE', 'r', encoding="utf-8") as lf:
     LICENSE = lf.read()
 
 with open('requirements.txt', 'r') as reqs:
