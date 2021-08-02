@@ -15,7 +15,7 @@ from ..registry import registry
 logger = logging.getLogger(__name__)
 
 
-URL_PREFIX = "https://s3.amazonaws.com/proteindata/pytorch-models/"
+URL_PREFIX = "https://s3.amazonaws.com/songlabdata/proteindata/pytorch-models/"
 UNIREP_PRETRAINED_CONFIG_ARCHIVE_MAP: typing.Dict[str, str] = {
     'babbler-1900': URL_PREFIX + 'unirep-base-config.json'}
 UNIREP_PRETRAINED_MODEL_ARCHIVE_MAP: typing.Dict[str, str] = {
