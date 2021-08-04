@@ -5,7 +5,7 @@ from ..registry import registry
 from .modeling_utils import ProteinConfig
 from .modeling_utils import ProteinModel
 
-URL_PREFIX = "https://s3.amazonaws.com/proteindata/pytorch-models/"
+URL_PREFIX = "https://s3.amazonaws.com/songlabdata/proteindata/pytorch-models/"
 TRROSETTA_PRETRAINED_MODEL_ARCHIVE_MAP = {
     'xaa': URL_PREFIX + "trRosetta-xaa-pytorch_model.bin",
     'xab': URL_PREFIX + "trRosetta-xab-pytorch_model.bin",
