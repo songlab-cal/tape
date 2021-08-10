@@ -189,7 +189,7 @@ This will report the overall accuracy, and will also dump a `results.pkl` file i
 
 ### trRosetta
 
-We have recently re-implemented the trRosetta model from Yang et. al. (2020). A link to the original repository, which was used as a basis for this re-implementation, can be found [here](https://github.com/gjoni/trRosetta). We provide a pytorch implementation and dataset to allow you to play around with the model. Data is available [here](http://s3.amazonaws.com/proteindata/data_pytorch/trrosetta.tar.gz). This is the same as the data in the original paper, however we've added train / val split files to allow you to train your own model reproducibly. To use this model
+We have recently re-implemented the trRosetta model from Yang et. al. (2020). A link to the original repository, which was used as a basis for this re-implementation, can be found [here](https://github.com/gjoni/trRosetta). We provide a pytorch implementation and dataset to allow you to play around with the model. Data is available [here](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/trrosetta.tar.gz). This is the same as the data in the original paper, however we've added train / val split files to allow you to train your own model reproducibly. To use this model
 
 ```python
 from tape import TRRosetta
@@ -245,13 +245,13 @@ The unsupervised Pfam dataset is around 7GB compressed and 19GB uncompressed. Th
 
 ### LMDB Data
 
-[Pretraining Corpus (Pfam)](http://s3.amazonaws.com/proteindata/data_pytorch/pfam.tar.gz) __|__ [Secondary Structure](http://s3.amazonaws.com/proteindata/data_pytorch/secondary_structure.tar.gz) __|__ [Contact (ProteinNet)](http://s3.amazonaws.com/proteindata/data_pytorch/proteinnet.tar.gz) __|__ [Remote Homology](http://s3.amazonaws.com/proteindata/data_pytorch/remote_homology.tar.gz) __|__ [Fluorescence](http://s3.amazonaws.com/proteindata/data_pytorch/fluorescence.tar.gz) __|__ [Stability](http://s3.amazonaws.com/proteindata/data_pytorch/stability.tar.gz)
+[Pretraining Corpus (Pfam)](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/pfam.tar.gz) __|__ [Secondary Structure](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/secondary_structure.tar.gz) __|__ [Contact (ProteinNet)](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/proteinnet.tar.gz) __|__ [Remote Homology](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/remote_homology.tar.gz) __|__ [Fluorescence](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/fluorescence.tar.gz) __|__ [Stability](http://s3.amazonaws.com/songlabdata/proteindata/data_pytorch/stability.tar.gz)
 
 ### Raw Data
 
 Raw data files are stored in JSON format for maximum portability. This data is JSON-ified, which removes certain constructs (in particular numpy arrays). As a result they cannot be directly loaded into the provided pytorch datasets (although the conversion should be quite easy by simply adding calls to `np.array`).
 
-[Pretraining Corpus (Pfam)](http://s3.amazonaws.com/proteindata/data_raw_pytorch/pfam.tar.gz) __|__ [Secondary Structure](http://s3.amazonaws.com/proteindata/data_raw_pytorch/secondary_structure.tar.gz) __|__ [Contact (ProteinNet)](http://s3.amazonaws.com/proteindata/data_raw_pytorch/proteinnet.tar.gz) __|__ [Remote Homology](http://s3.amazonaws.com/proteindata/data_raw_pytorch/remote_homology.tar.gz) __|__ [Fluorescence](http://s3.amazonaws.com/proteindata/data_raw_pytorch/fluorescence.tar.gz) __|__ [Stability](http://s3.amazonaws.com/proteindata/data_raw_pytorch/stability.tar.gz)
+[Pretraining Corpus (Pfam)](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/pfam.tar.gz) __|__ [Secondary Structure](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/secondary_structure.tar.gz) __|__ [Contact (ProteinNet)](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/proteinnet.tar.gz) __|__ [Remote Homology](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/remote_homology.tar.gz) __|__ [Fluorescence](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/fluorescence.tar.gz) __|__ [Stability](http://s3.amazonaws.com/songlabdata/proteindata/data_raw_pytorch/stability.tar.gz)
 
 
 ## Leaderboard

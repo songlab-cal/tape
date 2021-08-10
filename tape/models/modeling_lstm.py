@@ -15,7 +15,7 @@ from ..registry import registry
 logger = logging.getLogger(__name__)
 
 
-URL_PREFIX = "https://s3.amazonaws.com/proteindata/pytorch-models/"
+URL_PREFIX = "https://s3.amazonaws.com/songlabdata/proteindata/pytorch-models/"
 LSTM_PRETRAINED_CONFIG_ARCHIVE_MAP: typing.Dict[str, str] = {}
 LSTM_PRETRAINED_MODEL_ARCHIVE_MAP: typing.Dict[str, str] = {}
 
