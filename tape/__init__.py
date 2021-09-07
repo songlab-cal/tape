@@ -9,7 +9,7 @@ from pathlib import Path
 import importlib
 import pkgutil
 
-__version__ = '0.4'
+__version__ = '0.5'
 
 
 # Import all the models and configs
