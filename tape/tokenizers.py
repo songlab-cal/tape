@@ -91,8 +91,7 @@ UNIREP_VOCAB = OrderedDict([
     ("Z", 23),
     ("B", 23),
     ("J", 23),
-    ("<cls>", 24),
-    ("<sep>", 25)])
+    ("<cls>", 24)])
 
 
 class TAPETokenizer():
@@ -106,7 +105,7 @@ class TAPETokenizer():
             self.vocab = UNIREP_VOCAB
         self.tokens = list(self.vocab.keys())
         self._vocab_type = vocab
-        assert self.start_token in self.vocab and self.stop_token in self.vocab
+        assert self.start_token in self.vocab
 
     @property
     def vocab_size(self) -> int:
