@@ -197,8 +197,8 @@ from tape.datasets import TRRosettaDataset
 
 # Download data and place it under `<data_path>/trrosetta`
 
-train_data = TRRosettaDatset('<data_path>', 'train')  # will subsample MSAs
-valid_data = TRRosettaDatset('<data_path>', 'valid')  # will not subsample MSAs
+train_data = TRRosettaDataset('<data_path>', 'train')  # will subsample MSAs
+valid_data = TRRosettaDataset('<data_path>', 'valid')  # will not subsample MSAs
 
 model = TRRosetta.from_pretrained('xaa')  # valid choices are 'xaa', 'xab', 'xac', 'xad', 'xae'. Each corresponds to one of the ensemble models.
 
